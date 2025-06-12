@@ -45,6 +45,30 @@ This package requires the following Unity packages:
 - com.github.asus4.onnxruntime-extensions (0.4.0)
 - com.unity.nuget.newtonsoft-json (3.2.1)
 
+### Setting up Package Dependencies
+
+Some dependencies require additional scoped registry configuration. Add the following to your project's `Packages/manifest.json` file:
+
+```json
+{
+  "scopedRegistries": [
+    {
+      "name": "NPM",
+      "url": "https://registry.npmjs.com",
+      "scopes": [
+        "com.github.asus4"
+      ]
+    }
+  ],
+  "dependencies": {
+    "com.genesis.sparktts.unity": "file:/path/to/Spark-TTS-Unity",
+    // ... other dependencies
+  }
+}
+```
+
+**Note**: Replace `/path/to/Spark-TTS-Unity` with the actual path to your Spark-TTS-Unity package folder.
+
 ## Features
 
 - On-device text-to-speech synthesis
