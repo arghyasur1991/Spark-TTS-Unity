@@ -93,6 +93,9 @@ public class TTSExample : MonoBehaviour
 
     async void Start()
     {
+        // Initialize the TTS system (optional - sets log levels)
+        CharacterVoiceFactory.Initialize(DebugLogger.LogLevel.Warning);
+        
         // Get reference to AudioSource
         audioSource = GetComponent<AudioSource>();
         
@@ -141,6 +144,7 @@ public class TTSExample : MonoBehaviour
 ```csharp
 using UnityEngine;
 using SparkTTS;
+using System.Threading.Tasks;
 
 public class VoiceCloningExample : MonoBehaviour
 {
@@ -148,8 +152,11 @@ public class VoiceCloningExample : MonoBehaviour
     private CharacterVoice clonedVoice;
     private AudioSource audioSource;
     
-    void Start()
+    async void Start()
     {
+        // Initialize the TTS system (optional - sets log levels)
+        CharacterVoiceFactory.Initialize(DebugLogger.LogLevel.Warning);
+        
         audioSource = GetComponent<AudioSource>();
         
         // Get the singleton instance of the factory
@@ -157,8 +164,8 @@ public class VoiceCloningExample : MonoBehaviour
         
         if (referenceClip != null)
         {
-            // Clone voice from reference audio
-            clonedVoice = voiceFactory.CreateFromReference(referenceClip);
+            // Clone voice from reference audio (note: this is async)
+            clonedVoice = await voiceFactory.CreateFromReferenceAsync(referenceClip);
             Debug.Log("Voice cloned from reference audio");
         }
     }
