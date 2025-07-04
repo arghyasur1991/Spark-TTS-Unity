@@ -3,7 +3,6 @@
     "rootNamespace": "SparkTTS",
     "references": [
         "com.github.asus4.onnxruntime",
-        "com.github.asus4.onnxruntime-extensions",
         "com.unity.nuget.newtonsoft-json"
     ],
     "includePlatforms": [],
