@@ -81,16 +81,6 @@ namespace SparkTTS.Models
             }
         }
 
-        /// <summary>
-        /// Synchronous wrapper for generating global tokens from mel spectrogram input.
-        /// Uses the asynchronous implementation internally.
-        /// </summary>
-        /// <param name="melSpectrogramTuple">The mel spectrogram data and shape tuple</param>
-        /// <returns>The generated global tokens array</returns>
-        [Obsolete("Use GenerateTokensAsync for better performance. This synchronous method will be removed in future versions.")]
-        public int[] GenerateTokens((float[] melData, int[] melShape) melSpectrogramTuple)
-        {
-            return GenerateTokensAsync(melSpectrogramTuple).GetAwaiter().GetResult();
-        }
+
     }
 } 

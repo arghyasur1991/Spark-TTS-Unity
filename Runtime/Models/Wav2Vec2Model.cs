@@ -84,16 +84,6 @@ namespace SparkTTS.Models
             }
         }
 
-        /// <summary>
-        /// Synchronous wrapper for generating audio features from raw mono audio samples.
-        /// Uses the asynchronous implementation internally.
-        /// </summary>
-        /// <param name="monoAudioSamples">The mono audio samples to process</param>
-        /// <returns>A tuple containing (features, shape) or null on error</returns>
-        [Obsolete("Use GenerateFeaturesAsync for better performance. This synchronous method will be removed in future versions.")]
-        public (float[] features, int[] shape)? GenerateFeatures(float[] monoAudioSamples)
-        {
-            return GenerateFeaturesAsync(monoAudioSamples).GetAwaiter().GetResult();
-        }
+
     }
 } 

@@ -56,7 +56,7 @@ namespace SparkTTS
 
         public async Task GenerateVoiceAsync(string referenceText)
         {
-            var result = await Task.Run(() => _sparkTts.Inference(referenceText, null, null, Gender, Pitch, Speed));
+            var result = await _sparkTts.InferenceAsync(referenceText, null, null, Gender, Pitch, Speed);
             
             // Store voice parameters
             _referenceWaveform = result.Waveform;
@@ -105,16 +105,16 @@ namespace SparkTTS
                         Speed);
                     
                     // Run inference with updated inputs and cached global tokens
-                    result = await Task.Run(() => _sparkTts.Inference(
+                    result = await _sparkTts.InferenceAsync(
                         modelInputs: updatedInputs,
-                        globalTokenIds: _cachedGlobalTokenIds));
+                        globalTokenIds: _cachedGlobalTokenIds);
                     
                     Logger.Log("[CharacterVoice.GenerateSpeech] Used optimized generation with updated tokenized inputs");
                 }
                 else
                 {
                     // Run standard inference for first-time generation
-                    result = await Task.Run(() => _sparkTts.Inference(text, _referenceWaveform, null, Gender, Pitch, Speed));
+                    result = await _sparkTts.InferenceAsync(text, _referenceWaveform, null, Gender, Pitch, Speed);
                     Logger.Log("[CharacterVoice.GenerateSpeech] Used standard generation path");
                 }
                 

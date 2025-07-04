@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace SparkTTS.Core
 {
@@ -41,12 +42,12 @@ namespace SparkTTS.Core
         }
 
         /// <summary>
-        /// Tokenizes audio features into semantic tokens (Python: BiCodec.tokenize equivalent function)
+        /// Asynchronously tokenizes audio features into semantic tokens (Python: BiCodec.tokenize equivalent function)
         /// </summary>
         /// <param name="features">Feature tensor data</param>
         /// <param name="shape">Shape of the feature tensor</param>
-        /// <returns>List of semantic token IDs</returns>
-        public List<long> Tokenize(float[] features, int[] shape)
+        /// <returns>A task containing list of semantic token IDs</returns>
+        public async Task<List<long>> TokenizeAsync(float[] features, int[] shape)
         {
             if (!IsInitialized)
             {
@@ -54,7 +55,7 @@ namespace SparkTTS.Core
                 return null;
             }
             
-            var result = _encoderQuantizerModel.GenerateSemanticTokens(features, shape);
+            var result = await _encoderQuantizerModel.GenerateSemanticTokensAsync(features, shape);
             if (result.HasValue)
             {
                 return new List<long>(result.Value.semanticTokensData);
@@ -64,12 +65,12 @@ namespace SparkTTS.Core
         }
 
         /// <summary>
-        /// Detokenizes semantic and global tokens into a waveform (Python: BiCodec.detokenize equivalent)
+        /// Asynchronously detokenizes semantic and global tokens into a waveform (Python: BiCodec.detokenize equivalent)
         /// </summary>
         /// <param name="semanticTokens">Array of semantic tokens</param>
         /// <param name="globalTokens">Array of global tokens</param>
-        /// <returns>Synthesized audio waveform as float array</returns>
-        public float[] Detokenize(long[] semanticTokens, int[] globalTokens)
+        /// <returns>A task containing synthesized audio waveform as float array</returns>
+        public async Task<float[]> DetokenizeAsync(long[] semanticTokens, int[] globalTokens)
         {
             if (!IsInitialized)
             {
@@ -87,7 +88,7 @@ namespace SparkTTS.Core
             int[] semanticShape = { 1, semanticTokens.Length };
             int[] globalShape = { 1, 1, globalTokens.Length };
 
-            return _vocoderModel.Synthesize(
+            return await _vocoderModel.SynthesizeAsync(
                 semanticTokens,
                 semanticShape, 
                 globalTokens, 
@@ -96,13 +97,13 @@ namespace SparkTTS.Core
         }
 
         /// <summary>
-        /// Legacy method - converts LLM-generated semantic tokens and global speaker tokens into a waveform.
-        /// Uses Detokenize internally for consistency.
+        /// Asynchronously converts LLM-generated semantic tokens and global speaker tokens into a waveform.
+        /// Uses DetokenizeAsync internally for consistency.
         /// </summary>
         /// <param name="llmGeneratedSemanticTokens">List of semantic token IDs from the LLM.</param>
         /// <param name="globalSpeakerTokens">List of global speaker token IDs.</param>
-        /// <returns>Synthesized waveform as a float array.</returns>
-        public float[] DetokenizeToWaveform(List<long> llmGeneratedSemanticTokens, List<int> globalSpeakerTokens)
+        /// <returns>A task containing synthesized waveform as a float array.</returns>
+        public async Task<float[]> DetokenizeToWaveformAsync(List<long> llmGeneratedSemanticTokens, List<int> globalSpeakerTokens)
         {
             if (llmGeneratedSemanticTokens == null || globalSpeakerTokens == null)
             {
@@ -110,7 +111,7 @@ namespace SparkTTS.Core
                 return null;
             }
 
-            return Detokenize(
+            return await DetokenizeAsync(
                 llmGeneratedSemanticTokens.ToArray(),
                 globalSpeakerTokens.ToArray()
             );

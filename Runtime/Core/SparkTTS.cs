@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
+using System.Threading.Tasks;
 using UnityEngine;
 
 namespace SparkTTS.Core
@@ -141,12 +142,12 @@ namespace SparkTTS.Core
 
                 // --- Initialize ONNX Models ---
                 Logger.Log("[SparkTTS] Initializing ONNX Models...");
-                _melModel = new MelSpectrogramModel(config.MelModelFolder, config.MelModelFile);
-                _speakerEncoderModel = new SpeakerEncoderModel(config.SpeakerEncoderFolder, config.SpeakerEncoderFile);
-                _llmModel = new LLMModel(_textTokenizerService.Config, config.LLMModelFolder, config.LLMModelFile); // Pass tokenizer config
-                _vocoderModel = new VocoderModel(config.VocoderModelFolder, config.VocoderModelFile);
-                _wav2Vec2Model = new Wav2Vec2Model(config.Wav2Vec2ModelFolder, config.Wav2Vec2ModelFile);
-                _encoderQuantizerModel = new BiCodecEncoderQuantizerModel(config.EncoderQuantizerModelFolder, config.EncoderQuantizerModelFile);
+                _melModel = new MelSpectrogramModel();
+                _speakerEncoderModel = new SpeakerEncoderModel();
+                _llmModel = new LLMModel(tokenizerDef); // Pass tokenizer definition
+                _vocoderModel = new VocoderModel();
+                _wav2Vec2Model = new Wav2Vec2Model();
+                _encoderQuantizerModel = new BiCodecEncoderQuantizerModel();
                 Logger.Log("[SparkTTS] ONNX Models Initialized.");
 
                 // --- Initialize Higher-Level SparkTTS Components ---
@@ -252,9 +253,9 @@ namespace SparkTTS.Core
         }
 
         /// <summary>
-        /// Tokenizes inputs without performing inference, matching Python implementation
+        /// Asynchronously tokenizes inputs without performing inference, matching Python implementation
         /// </summary>
-        public (TokenizationOutput modelInputs, int[] globalTokenIds) TokenizeInputs(
+        public async Task<(TokenizationOutput modelInputs, int[] globalTokenIds)> TokenizeInputsAsync(
             string text,
             float[] promptSpeechSamples = null,
             string promptText = null,
@@ -268,7 +269,7 @@ namespace SparkTTS.Core
             if (promptSpeechSamples != null)
             {
                 // Voice cloning mode
-                var (globalTokens, semanticTokens) = _audioTokenizer.Tokenize(promptSpeechSamples);
+                var (globalTokens, semanticTokens) = await _audioTokenizer.TokenizeAsync(promptSpeechSamples);
                 globalTokenIds = globalTokens;
                 List<long> acousticSemanticTokens = semanticTokens;
 
@@ -335,7 +336,7 @@ namespace SparkTTS.Core
         /// <summary>
         /// Main inference method matching Python's inference signature and behavior
         /// </summary>
-        public TTSInferenceResult Inference(
+        public async Task<TTSInferenceResult> InferenceAsync(
             string text = null,
             float[] promptSpeechSamples = null,
             string promptText = null,
@@ -365,7 +366,7 @@ namespace SparkTTS.Core
                     return new TTSInferenceResult { Success = false, ErrorMessage = "Either text or modelInputs must be provided" };
                 }
 
-                (modelInputs, globalTokenIds) = TokenizeInputs(
+                (modelInputs, globalTokenIds) = await TokenizeInputsAsync(
                     text, promptSpeechSamples, promptText, gender, pitch, speed);
                 var endTokenizationTime = Stopwatch.GetTimestamp();
                 _tokenizationTimer.AddTiming(startTime, endTokenizationTime);
@@ -381,7 +382,7 @@ namespace SparkTTS.Core
             
             var startSemanticTokenGeneration = Stopwatch.GetTimestamp();
 
-            List<int> generatedIds = _llmModel.GenerateSemanticTokens(
+            List<int> generatedIds = await _llmModel.GenerateSemanticTokensAsync(
                 modelInputs, 
                 maxNewTokens, 
                 temperature, 
@@ -451,7 +452,7 @@ namespace SparkTTS.Core
             Logger.Log($"[SparkTTS.Inference] Generating waveform from tokens: {semanticTokenIds.Count} semantic tokens, {globalTokensForBiCodec.Count} global tokens");
 
             // Use the appropriate global tokens (extracted for control mode, from input for cloning)
-            float[] waveform = _biCodec.DetokenizeToWaveform(semanticTokenIds, globalTokensForBiCodec);
+            float[] waveform = await _biCodec.DetokenizeToWaveformAsync(semanticTokenIds, globalTokensForBiCodec);
             var endAudioConversion = Stopwatch.GetTimestamp();
             _vocoderTimer.AddTiming(startAudioConversion, endAudioConversion);
 

@@ -92,19 +92,6 @@ namespace SparkTTS.Models
             }
         }
 
-        /// <summary>
-        /// Synchronous wrapper for generating semantic tokens from input features.
-        /// Uses the asynchronous implementation internally.
-        /// </summary>
-        /// <param name="featuresData">Float array of feature data</param>
-        /// <param name="featuresShape">Shape of the features (Batch, SeqLen, FeatureDim)</param>
-        /// <returns>A tuple containing (semanticTokensData, semanticTokensShape) or null on error</returns>
-        [Obsolete("Use GenerateSemanticTokensAsync for better performance. This synchronous method will be removed in future versions.")]
-        public (long[] semanticTokensData, int[] semanticTokensShape)? GenerateSemanticTokens(
-            float[] featuresData, 
-            int[] featuresShape)
-        {
-            return GenerateSemanticTokensAsync(featuresData, featuresShape).GetAwaiter().GetResult();
-        }
+
     }
 } 

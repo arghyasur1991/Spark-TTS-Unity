@@ -191,16 +191,6 @@ namespace SparkTTS.Models
             }
         }
 
-        /// <summary>
-        /// Synchronous wrapper for generating mel spectrogram from raw mono audio samples.
-        /// Uses the asynchronous implementation internally.
-        /// </summary>
-        /// <param name="monoAudioSamples">The mono audio samples to process</param>
-        /// <returns>A tuple containing (melData, melShape) or null on error</returns>
-        [Obsolete("Use GenerateMelSpectrogramAsync for better performance. This synchronous method will be removed in future versions.")]
-        public (float[] melData, int[] melShape)? GenerateMelSpectrogram(float[] monoAudioSamples)
-        {
-            return GenerateMelSpectrogramAsync(monoAudioSamples).GetAwaiter().GetResult();
-        }
+
     }
 } 

@@ -212,7 +212,13 @@ namespace SparkTTS.Models
 
         /// <summary>
         /// Asynchronously generates semantic tokens from tokenized input.
-        /// This is the async wrapper for the main generation logic.
+        // Note: The complex InspectAndPopulateNames method has been simplified
+        // in favor of the new ORTModel pattern. The LLM functionality remains intact
+        // but uses the async initialization approach.
+
+        /// <summary>
+        /// Asynchronously generates semantic tokens from tokenized input.
+        /// This is the main generation method that should be used instead of the old synchronous version.
         /// </summary>
         /// <param name="llmInitialInput">The tokenized input to process</param>
         /// <param name="maxNewTokens">Maximum number of new tokens to generate</param>
@@ -229,46 +235,17 @@ namespace SparkTTS.Models
             int topK = 50,
             float topP = 0.95f)
         {
-            if (llmInitialInput == null)
-                throw new ArgumentNullException(nameof(llmInitialInput));
-
-            return await Task.Run(() => 
-            {
-                try
-                {
-                    return GenerateSemanticTokens(llmInitialInput, maxNewTokens, temperature, topK, topP);
-                }
-                catch (Exception ex)
-                {
-                    throw new InvalidOperationException($"LLM semantic token generation failed: {ex.Message}", ex);
-                }
-            });
-        }
-
-        // Note: The complex InspectAndPopulateNames method has been simplified
-        // in favor of the new ORTModel pattern. The LLM functionality remains intact
-        // but uses the async initialization approach.
-
-        public List<int> GenerateSemanticTokens(
-            TokenizationOutput llmInitialInput,
-            int maxNewTokens,
-            float temperature = 0.8f,
-            int topK = 50,
-            float topP = 0.95f)
-        {
             if (!IsInitialized) 
             { 
-                Logger.LogError("[LLMModel.GenTokens] Not initialized."); return null; 
+                throw new InvalidOperationException("[LLMModel] Model not initialized"); 
             }
             if (llmInitialInput == null || !llmInitialInput.InputIds.Any()) 
             { 
-                Logger.LogError("[LLMModel.GenTokens] Initial input is null/empty."); 
-                return null; 
+                throw new ArgumentNullException(nameof(llmInitialInput), "Initial input is null or empty"); 
             }
             if (string.IsNullOrEmpty(_inputIDsName) || string.IsNullOrEmpty(_logitsOutputName))
             { 
-                Logger.LogError("[LLMModel.GenTokens] Essential model input/output names not identified."); 
-                return null; 
+                throw new InvalidOperationException("Essential model input/output names not identified"); 
             }
 
             if (_numLLMLayers > 0 &&
@@ -277,17 +254,15 @@ namespace SparkTTS.Models
                  _presentKeyOutputNames.Count != _numLLMLayers || 
                  _presentValueOutputNames.Count != _numLLMLayers))
             { 
-                Logger.LogError("[LLMModel.GenTokens] KV cache names not fully identified for all layers."); 
-                return null; 
+                throw new InvalidOperationException("KV cache names not fully identified for all layers"); 
             }
 
             if (_numLLMLayers > 0 && (_numAttentionHeads == 0 || _headDimension == 0))
             { 
-                Logger.LogError("[LLMModel.GenTokens] KV cache dimensions not inferred, cannot create empty KV cache."); 
-                return null; 
+                throw new InvalidOperationException("KV cache dimensions not inferred, cannot create empty KV cache"); 
             }
 
-            List<int> newlyGeneratedTokenIds = new(maxNewTokens);
+            var newlyGeneratedTokenIds = new List<int>(maxNewTokens);
             const int batchSize = 1;
 
             try
@@ -303,17 +278,19 @@ namespace SparkTTS.Models
                 {
                     inputIdsData[i] = intInputIds[i];
                 }
+                
                 // Generate inputs for initial pass
-                List<NamedOnnxValue> initialInputs = PrepareInitialInputs(
+                var initialInputs = await PrepareInitialInputsAsync(
                     inputIdsData, 
                     llmInitialInput.AttentionMask?.ToArray(), 
                     batchSize);
 
-                // Run initial inference
-                InferenceOutput initialOutput = RunInference(initialInputs, initialInputs.Count > 2).GetAwaiter().GetResult();
+                // Run initial inference - extract KV cache if we have layers with KV cache
+                bool extractKvCache = _numLLMLayers > 0;
+                var initialOutput = await RunInference(initialInputs, extractKvCache);
                 if (initialOutput == null)
                 {
-                    return null;
+                    throw new InvalidOperationException("Initial inference failed");
                 }
 
                 // Process logits and sample next token
@@ -336,7 +313,7 @@ namespace SparkTTS.Models
                 }
 
                 // Extract KV cache from initial pass
-                List<DenseTensor<float>> kvCache = UpdateKVCache(initialOutput.RegularKeyValues);
+                var kvCache = UpdateKVCache(initialOutput.RegularKeyValues);
                 
                 // 2. Autoregressive generation loop
                 for (int step = 0; step < maxNewTokens - 1; ++step) // -1 because one token already generated
@@ -345,13 +322,13 @@ namespace SparkTTS.Models
                     int currentTokenIdForInput = newlyGeneratedTokenIds[newlyGeneratedTokenIds.Count - 1];
                     
                     // Generate inputs for single token step
-                    List<NamedOnnxValue> stepInputs = PrepareStepInputs(
+                    var stepInputs = await PrepareStepInputsAsync(
                         currentTokenIdForInput, 
                         kvCache, 
                         batchSize);
 
                     // Run inference for this step
-                    InferenceOutput stepOutput = RunInference(stepInputs, kvCache != null).GetAwaiter().GetResult();
+                    var stepOutput = await RunInference(stepInputs, kvCache != null);
                     if (stepOutput == null)
                     {
                         break;
@@ -389,7 +366,7 @@ namespace SparkTTS.Models
             catch (Exception ex)
             {
                 Logger.LogError($"[LLMModel.GenTokens] Exception: {ex.Message}\n{ex.StackTrace}");
-                return null;
+                throw new InvalidOperationException($"Token generation failed: {ex.Message}", ex);
             }
             finally
             {
@@ -398,7 +375,6 @@ namespace SparkTTS.Models
                     _inferenceTimer.LogTiming();
                     _updateKVCacheTimer.LogTiming();
                     _sampleLogitsTimer.LogTiming();
-                    // _sampleLogitsTimer2.LogTiming();
                     _prepareInitialInputsTimer.LogTiming();
                     _prepareStepInputsTimer.LogTiming();
                     _generateSemanticTokensTimer.LogTiming();
@@ -540,6 +516,18 @@ namespace SparkTTS.Models
             _prepareStepInputsTimer.AddTiming(prepareStepInputsStartTime, prepareStepInputsEndTime);
 
             return inputsForCurrentStep;
+        }
+
+        // Async wrapper for PrepareInitialInputs
+        private async Task<List<NamedOnnxValue>> PrepareInitialInputsAsync(long[] inputIdsData, int[] attentionMaskData, int batchSize)
+        {
+            return await Task.Run(() => PrepareInitialInputs(inputIdsData, attentionMaskData, batchSize));
+        }
+
+        // Async wrapper for PrepareStepInputs  
+        private async Task<List<NamedOnnxValue>> PrepareStepInputsAsync(int tokenId, List<DenseTensor<float>> kvCache, int batchSize)
+        {
+            return await Task.Run(() => PrepareStepInputs(tokenId, kvCache, batchSize));
         }
 
         // Run ONNX inference with prepared inputs using the new ORTModel pattern

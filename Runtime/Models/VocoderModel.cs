@@ -159,22 +159,6 @@ namespace SparkTTS.Models
             }
         }
 
-        /// <summary>
-        /// Synchronous wrapper for synthesizing a waveform from semantic and global tokens.
-        /// Uses the asynchronous implementation internally.
-        /// </summary>
-        /// <param name="semanticTokens">The semantic tokens array (int64)</param>
-        /// <param name="semanticTokensShape">Shape of the semantic tokens</param>
-        /// <param name="globalTokens">The global tokens array (int32)</param>
-        /// <param name="globalTokensShape">Shape of the global tokens</param>
-        /// <returns>The synthesized waveform or null on error</returns>
-        [Obsolete("Use SynthesizeAsync for better performance. This synchronous method will be removed in future versions.")]
-        public float[] Synthesize(
-            long[] semanticTokens, int[] semanticTokensShape,
-            int[] globalTokens, int[] globalTokensShape)
-        {
-            return SynthesizeAsync(semanticTokens, semanticTokensShape, globalTokens, globalTokensShape)
-                .GetAwaiter().GetResult();
-        }
+
     }
 } 
