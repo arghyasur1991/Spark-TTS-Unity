@@ -11,11 +11,11 @@ namespace SparkTTS.Core
 
         // Model folder constants
         public const string LLMFolder = "LLM";
-        public const string SpeakerEncoderFolder = "SpeakerEncoder";
-        public const string VocoderFolder = "Vocoder";
-        public const string MelSpectrogramFolder = "MelSpectrogram";
-        public const string Wav2Vec2Folder = "Wav2Vec2";
-        public const string BiCodecFolder = "BiCodec";
+        public const string SpeakerEncoderFolder = "";
+        public const string VocoderFolder = "";
+        public const string MelSpectrogramFolder = "";
+        public const string Wav2Vec2Folder = "";
+        public const string BiCodecFolder = "";
 
         // Model file name constants (without extension)
         public const string LLMModelName = "model";
