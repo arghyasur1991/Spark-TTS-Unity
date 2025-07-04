@@ -3,147 +3,97 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text; // For StringBuilder
+using System.Threading.Tasks;
 
 namespace SparkTTS.Models
 {
     using System.Diagnostics;
     using Core;
     using Utils;
+    
+    /// <summary>
+    /// Wav2Vec2 model for generating audio features from raw audio samples.
+    /// Inherits from ORTModel and follows the consistent LoadInput/Run pattern.
+    /// </summary>
     internal class Wav2Vec2Model : ORTModel
     {
         public static new DebugLogger Logger = new();
 
-        // Input/Output names will be determined dynamically
-        private string _inputName = "input_values"; // Default assumption, confirm with inspection
-        private string _outputName; // To be populated by InspectAndPopulateNames
-
-        internal Wav2Vec2Model(string modelFolder = null, string modelFile = null)
-            : base(SparkTTSModelPaths.GetModelPath(modelFolder ?? SparkTTSModelPaths.Wav2Vec2Folder,
-                                                  modelFile ?? SparkTTSModelPaths.Wav2Vec2File))
+        /// <summary>
+        /// Initializes a new instance of the Wav2Vec2Model class.
+        /// </summary>
+        /// <param name="logLevel">The logging level for this model instance</param>
+        public Wav2Vec2Model(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+            : base(SparkTTSModelPaths.Wav2Vec2ModelName, 
+                   SparkTTSModelPaths.Wav2Vec2Folder, 
+                   logLevel)
         {
-            if (IsInitialized)
-            {
-                InspectAndPopulateNames();
-            }
-            else
-            {
-                Logger.LogError($"[Wav2Vec2Model] Base model '{_modelPath}' failed to initialize. Wav2Vec2Model will not be functional.");
-            }
+            Logger.Log("[Wav2Vec2Model] Initialized successfully");
         }
 
-        private void InspectAndPopulateNames()
+        /// <summary>
+        /// Asynchronously generates audio features from raw mono audio samples.
+        /// Uses the consistent LoadInput/Run pattern for professional model execution.
+        /// </summary>
+        /// <param name="monoAudioSamples">The mono audio samples to process</param>
+        /// <returns>A task containing a tuple with (features, shape) or null on error</returns>
+        /// <exception cref="ArgumentNullException">Thrown when input audio samples are null</exception>
+        /// <exception cref="ArgumentException">Thrown when input audio samples are empty</exception>
+        /// <exception cref="InvalidOperationException">Thrown when model execution fails</exception>
+        public async Task<(float[] features, int[] shape)?> GenerateFeaturesAsync(float[] monoAudioSamples)
         {
-            if (_session == null)
-            {
-                Logger.LogError("[Wav2Vec2Model.Inspect] InferenceSession is null. Cannot inspect.");
-                return;
-            }
-
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine($"--- Wav2Vec2Model Inspection ({_modelPath}) ---");
-
-            // Input Inspection (Assume one input, verify name)
-            if (_session.InputMetadata.Count == 1)
-            {
-                _inputName = _session.InputMetadata.Keys.First();
-                var meta = _session.InputMetadata[_inputName];
-                sb.AppendLine($"Input Name (dynamic): {_inputName}, Type: {meta.ElementType}, Shape: ({string.Join(", ", meta.Dimensions)})");
-            }
-            else
-            {
-                Logger.LogWarning($"[Wav2Vec2Model.Inspect] Expected 1 input, found {_session.InputMetadata.Count}. Sticking with default '{_inputName}'. Inputs: {string.Join(", ", _session.InputMetadata.Keys)}");
-            }
-
-
-            // Output Inspection (Assume one output, store its name)
-            if (_session.OutputMetadata.Count == 1)
-            {
-                _outputName = _session.OutputMetadata.Keys.First();
-                var meta = _session.OutputMetadata[_outputName];
-                sb.AppendLine($"Output Name (dynamic): {_outputName}, Type: {meta.ElementType}, Shape: ({string.Join(", ", meta.Dimensions)})");
-            }
-            else
-            {
-                // If multiple outputs, try to find one containing "hidden" or "output" as a guess
-                _outputName = _session.OutputMetadata.Keys.FirstOrDefault(k => k.ToLower().Contains("hidden") || k.ToLower().Contains("output"));
-                if(string.IsNullOrEmpty(_outputName))
-                {
-                    _outputName = _session.OutputMetadata.Keys.FirstOrDefault(); // Fallback to first if no heuristic match
-                }
-                Logger.Log($"[Wav2Vec2Model.Inspect] Expected 1 output, found {_session.OutputMetadata.Count}. Dynamically selecting '{_outputName}'. Outputs: {string.Join(", ", _session.OutputMetadata.Keys)}");
-                if (!string.IsNullOrEmpty(_outputName))
-                {
-                   var meta = _session.OutputMetadata[_outputName];
-                   sb.AppendLine($"Selected Output Name: {_outputName}, Type: {meta.ElementType}, Shape: ({string.Join(", ", meta.Dimensions)})");
-                }
-            }
-            
-            if (string.IsNullOrEmpty(_outputName))
-            {
-                Logger.LogError("[Wav2Vec2Model.Inspect] Could not determine an output name!");
-            }
-
-            Logger.Log(sb.ToString());
-        }
-
-
-        public (float[] features, int[] shape)? GenerateFeatures(float[] monoAudioSamples)
-        {
-            if (!IsInitialized || _session == null) 
-            { 
-                Logger.LogError("[Wav2Vec2Model] Not initialized."); 
-                return null; 
-            }
-            if (monoAudioSamples == null || monoAudioSamples.Length == 0) 
-            { 
-                Logger.LogError("[Wav2Vec2Model] Input audio samples are null or empty."); 
-                return null; 
-            }
-            if (string.IsNullOrEmpty(_inputName) || string.IsNullOrEmpty(_outputName))
-            {
-                Logger.LogError("[Wav2Vec2Model] Input or Output name not determined. Cannot run inference.");
-                return null;
-            }
+            if (monoAudioSamples == null)
+                throw new ArgumentNullException(nameof(monoAudioSamples));
+            if (monoAudioSamples.Length == 0)
+                throw new ArgumentException("Input audio samples cannot be empty", nameof(monoAudioSamples));
 
             // Wav2Vec2 often expects shape (batch_size, num_samples)
-            var inputShape = new ReadOnlySpan<int>(new int[] { 1, monoAudioSamples.Length });
-            var inputTensor = new DenseTensor<float>(new Memory<float>(monoAudioSamples), inputShape);
-            var inputs = new List<NamedOnnxValue> { NamedOnnxValue.CreateFromTensor<float>(_inputName, inputTensor) };
+            var inputShape = new int[] { 1, monoAudioSamples.Length };
+            var inputTensor = new DenseTensor<float>(monoAudioSamples, inputShape);
+            var inputs = new List<Tensor<float>> { inputTensor };
 
-            Logger.Log($"[Wav2Vec2Model] Running inference with input shape: [{string.Join(",", inputShape.ToArray())}] on input '{_inputName}', expecting output '{_outputName}'");
-
+            Logger.Log($"[Wav2Vec2Model] Running inference with input shape: [{string.Join(",", inputShape)}]");
 
             try
             {
-                using (var outputs = _session.Run(inputs))
+                // Use the new LoadInput/Run pattern
+                var outputs = await Run(inputs);
+                
+                // Get the first output (features)
+                var outputValue = outputs.FirstOrDefault();
+                if (outputValue == null)
                 {
-                    DisposableNamedOnnxValue outputDisposableValue = outputs.FirstOrDefault(v => v.Name == _outputName); // Use dynamic name
-                    if (outputDisposableValue == null)
-                    {
-                        Logger.LogError($"[Wav2Vec2Model] Failed to get output tensor named '{_outputName}'. Check model output names. Available: {string.Join(", ", outputs.Select(o => o.Name))}");
-                        return null;
-                    }
-
-                    if (!(outputDisposableValue.Value is DenseTensor<float> outputTensor))
-                    {
-                        Logger.LogError($"[Wav2Vec2Model] Output '{_outputName}' is not DenseTensor<float>. Actual: {outputDisposableValue.Value?.GetType().FullName}");
-                        return null;
-                    }
-
-                    float[] features = outputTensor.Buffer.ToArray();
-                    int[] shape = outputTensor.Dimensions.ToArray().Select(d => (int)d).ToArray();
-                    
-                    Logger.Log($"[Wav2Vec2Model] Successfully generated features. Shape: [{string.Join(",", shape)}]");
-
-                    return (features, shape);
+                    throw new InvalidOperationException("No outputs received from Wav2Vec2 model");
                 }
+                
+                if (!(outputValue.Value is DenseTensor<float> outputTensor))
+                {
+                    throw new InvalidOperationException($"Unexpected output type: {outputValue.Value?.GetType().FullName}. Expected DenseTensor<float>");
+                }
+                
+                var features = outputTensor.Buffer.ToArray();
+                var shape = outputTensor.Dimensions.ToArray().Select(d => (int)d).ToArray();
+                
+                Logger.Log($"[Wav2Vec2Model] Successfully generated features. Shape: [{string.Join(",", shape)}]");
+                
+                return (features, shape);
             }
-            catch (Exception e)
+            catch (Exception ex)
             {
-                Logger.LogError($"[Wav2Vec2Model] Error during feature generation: {e.Message}\n{e.StackTrace}");
-                return null;
+                throw new InvalidOperationException($"Wav2Vec2 feature generation failed: {ex.Message}", ex);
             }
+        }
+
+        /// <summary>
+        /// Synchronous wrapper for generating audio features from raw mono audio samples.
+        /// Uses the asynchronous implementation internally.
+        /// </summary>
+        /// <param name="monoAudioSamples">The mono audio samples to process</param>
+        /// <returns>A tuple containing (features, shape) or null on error</returns>
+        [Obsolete("Use GenerateFeaturesAsync for better performance. This synchronous method will be removed in future versions.")]
+        public (float[] features, int[] shape)? GenerateFeatures(float[] monoAudioSamples)
+        {
+            return GenerateFeaturesAsync(monoAudioSamples).GetAwaiter().GetResult();
         }
     }
 } 

@@ -3,11 +3,17 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace SparkTTS.Models
 {
     using Core;
     using Utils;
+    
+    /// <summary>
+    /// BiCodec encoder quantizer model for generating semantic tokens from audio features.
+    /// Inherits from ORTModel and follows the consistent LoadInput/Run pattern.
+    /// </summary>
     internal class BiCodecEncoderQuantizerModel : ORTModel
     {
         // Input/Output names based on export_bicodec_encoder_quantizer_onnx.py
@@ -16,73 +22,89 @@ namespace SparkTTS.Models
 
         public static new DebugLogger Logger = new();
 
-        public BiCodecEncoderQuantizerModel(string modelFolder = null, string modelFile = null)
-            : base(SparkTTSModelPaths.GetModelPath(modelFolder ?? SparkTTSModelPaths.BiCodecEncoderQuantizerFolder, // Assumes this folder exists in SparkTTSModelPaths
-                                                  modelFile ?? SparkTTSModelPaths.BiCodecEncoderQuantizerFile)) // Assumes this file exists in SparkTTSModelPaths
+        /// <summary>
+        /// Initializes a new instance of the BiCodecEncoderQuantizerModel class.
+        /// </summary>
+        /// <param name="logLevel">The logging level for this model instance</param>
+        public BiCodecEncoderQuantizerModel(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+            : base(SparkTTSModelPaths.BiCodecEncoderQuantizerModelName, 
+                   SparkTTSModelPaths.BiCodecFolder, 
+                   logLevel)
         {
-            if (IsInitialized)
+            Logger.Log("[BiCodecEncoderQuantizerModel] Initialized successfully");
+        }
+
+        /// <summary>
+        /// Asynchronously generates semantic tokens from input features (e.g., Wav2Vec2 output).
+        /// Uses the consistent LoadInput/Run pattern for professional model execution.
+        /// </summary>
+        /// <param name="featuresData">Float array of feature data</param>
+        /// <param name="featuresShape">Shape of the features (Batch, SeqLen, FeatureDim)</param>
+        /// <returns>A task containing a tuple with (semanticTokensData, semanticTokensShape) or null on error</returns>
+        /// <exception cref="ArgumentNullException">Thrown when input parameters are null</exception>
+        /// <exception cref="ArgumentException">Thrown when features shape is invalid</exception>
+        /// <exception cref="InvalidOperationException">Thrown when model execution fails</exception>
+        public async Task<(long[] semanticTokensData, int[] semanticTokensShape)?> GenerateSemanticTokensAsync(
+            float[] featuresData, 
+            int[] featuresShape)
+        {
+            if (featuresData == null)
+                throw new ArgumentNullException(nameof(featuresData));
+            if (featuresShape == null)
+                throw new ArgumentNullException(nameof(featuresShape));
+            if (featuresShape.Length != 3)
+                throw new ArgumentException("Features shape must have 3 dimensions (Batch, SeqLen, FeatureDim)", nameof(featuresShape));
+            
+            Logger.Log($"[BiCodecEncoderQuantizerModel] Input features shape: [{string.Join(",", featuresShape)}]");
+            
+            // Create input tensor
+            var featuresTensor = new DenseTensor<float>(featuresData, featuresShape);
+            var inputs = new List<Tensor<float>> { featuresTensor };
+            
+            try
             {
-                InspectModel("BiCodecEncoderQuantizerModel");
+                // Use the new LoadInput/Run pattern
+                var outputs = await Run(inputs);
+                
+                // Get the first output (semantic tokens)
+                var outputValue = outputs.FirstOrDefault();
+                if (outputValue == null)
+                {
+                    throw new InvalidOperationException("No outputs received from BiCodec encoder quantizer model");
+                }
+                
+                // Expected output type is int64 based on export script (torch.long)
+                if (!(outputValue.Value is DenseTensor<long> outputTensor))
+                {
+                    throw new InvalidOperationException($"Unexpected output type: {outputValue.Value?.GetType().FullName}. Expected DenseTensor<long>");
+                }
+                
+                var tokensData = outputTensor.Buffer.ToArray(); // Creates a copy
+                var tokensShape = outputTensor.Dimensions.ToArray().Select(d => (int)d).ToArray(); // Ensure int[] shape
+                
+                Logger.Log($"[BiCodecEncoderQuantizerModel] Output semantic tokens shape: [{string.Join(",", tokensShape)}]");
+                
+                return (tokensData, tokensShape);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException($"BiCodec encoder quantizer inference failed: {ex.Message}", ex);
             }
         }
 
         /// <summary>
-        /// Generates semantic tokens from input features (e.g., Wav2Vec2 output).
+        /// Synchronous wrapper for generating semantic tokens from input features.
+        /// Uses the asynchronous implementation internally.
         /// </summary>
-        /// <param name="featuresData">Float array of feature data.</param>
-        /// <param name="featuresShape">Shape of the features (Batch, SeqLen, FeatureDim).</param>
-        /// <returns>A tuple containing (long[] semanticTokensData, int[] semanticTokensShape) or null on error.</returns>
-        public (long[] semanticTokensData, int[] semanticTokensShape)? GenerateSemanticTokens(float[] featuresData, int[] featuresShape)
+        /// <param name="featuresData">Float array of feature data</param>
+        /// <param name="featuresShape">Shape of the features (Batch, SeqLen, FeatureDim)</param>
+        /// <returns>A tuple containing (semanticTokensData, semanticTokensShape) or null on error</returns>
+        [Obsolete("Use GenerateSemanticTokensAsync for better performance. This synchronous method will be removed in future versions.")]
+        public (long[] semanticTokensData, int[] semanticTokensShape)? GenerateSemanticTokens(
+            float[] featuresData, 
+            int[] featuresShape)
         {
-            if (!IsInitialized || _session == null)
-            {
-                Logger.LogError("[BiCodecEncoderQuantizerModel] Session not initialized.");
-                return null;
-            }
-            if (featuresData == null || featuresShape == null || featuresShape.Length != 3)
-            {
-                Logger.LogError($"[BiCodecEncoderQuantizerModel] Invalid features input. Data null: {featuresData == null}, Shape null: {featuresShape == null}, Shape Rank: {featuresShape?.Length ?? 0} (expected 3).");
-                return null;
-            }
-            
-            Logger.Log($"[BiCodecEncoderQuantizerModel] Input features shape: [{string.Join(",", featuresShape)}]");
-            
-
-            var inputs = new List<NamedOnnxValue>();
-            try
-            {
-                var featuresTensor = new DenseTensor<float>(new Memory<float>(featuresData), new ReadOnlySpan<int>(featuresShape));
-                inputs.Add(NamedOnnxValue.CreateFromTensor<float>(FeaturesInputName, featuresTensor));
-
-                using (var outputs = _session.Run(inputs))
-                {
-                    DisposableNamedOnnxValue outputDisposableValue = outputs.FirstOrDefault(v => v.Name == SemanticTokensOutputName);
-                    if (outputDisposableValue == null)
-                    {
-                        Logger.LogError($"[BiCodecEncoderQuantizerModel] Failed to get output tensor named '{SemanticTokensOutputName}'. Available: {string.Join(", ", outputs.Select(o => o.Name))}");
-                        return null;
-                    }
-
-                    // Expected output type is int64 based on export script (torch.long)
-                    if (!(outputDisposableValue.Value is DenseTensor<long> outputTensor))
-                    {
-                        Logger.LogError($"[BiCodecEncoderQuantizerModel] Output '{SemanticTokensOutputName}' is not DenseTensor<long>. Actual: {outputDisposableValue.Value?.GetType().FullName}");
-                        return null;
-                    }
-
-                    long[] tokensData = outputTensor.Buffer.ToArray(); // Creates a copy
-                    int[] tokensShape = outputTensor.Dimensions.ToArray().Select(d => (int)d).ToArray(); // Ensure int[] shape
-
-                    Logger.Log($"[BiCodecEncoderQuantizerModel] Output semantic tokens shape: [{string.Join(",", tokensShape)}]");
-
-                    return (tokensData, tokensShape);
-                }
-            }
-            catch (Exception e)
-            {
-                Logger.LogError($"[BiCodecEncoderQuantizerModel] Error during inference: {e.Message}\n{e.StackTrace}");
-                return null;
-            }
+            return GenerateSemanticTokensAsync(featuresData, featuresShape).GetAwaiter().GetResult();
         }
     }
 } 
