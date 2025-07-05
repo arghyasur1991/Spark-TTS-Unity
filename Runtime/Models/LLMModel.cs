@@ -230,6 +230,7 @@ namespace SparkTTS.Models
             int topK = 50,
             float topP = 0.95f)
         {
+            await _loadTask;
             if (llmInitialInput == null || !llmInitialInput.InputIds.Any()) 
             { 
                 throw new ArgumentNullException(nameof(llmInitialInput), "Initial input is null or empty"); 

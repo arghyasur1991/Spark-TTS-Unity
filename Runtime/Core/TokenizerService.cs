@@ -904,15 +904,5 @@ namespace SparkTTS.Core
             Logger.Log($"[TokenizerService.Decode] Final decoded text: '{decodedText}'");
             return decodedText;
         }
-
-        // TODO: Implement Decode method to convert IDs back to string
-
-        // Added compatibility method for Python alignment
-        // This is a simpler version matching the Python API
-        public TokenizationOutput Encode(string text)
-        {
-            // This wraps the existing Encode method with default parameters
-            return Encode(text, addSpecialTokens: true);
-        }
     }
 } // End of namespace SparkTTS

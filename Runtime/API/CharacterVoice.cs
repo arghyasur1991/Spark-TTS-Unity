@@ -117,10 +117,10 @@ namespace SparkTTS
             
             // Store voice parameters
             _referenceWaveform = result.Waveform;
+            (TokenizationOutput modelInputs, int[] globalTokenIds) = await _sparkTts.TokenizeInputsAsync(referenceText, _referenceWaveform);
 
-            // Store pre-generated tokens if provided
-            _cachedGlobalTokenIds = result.GlobalTokenIds;
-            _cachedModelInputs = result.ModelInputs;
+            _cachedGlobalTokenIds = globalTokenIds;
+            _cachedModelInputs = modelInputs;
         }
 
         public async Task SaveVoiceAsync(string voiceFolder)
@@ -211,9 +211,8 @@ namespace SparkTTS
                 Logger.Log($"[CharacterVoice.GenerateSpeech] Generating speech for text: {text}");
                 
                 TTSInferenceResult result;
-                bool useOptimizedGeneration = false; //TODO: fix this
                 // Check if we have cached tokens for optimization
-                if (useOptimizedGeneration && _cachedModelInputs != null && _cachedGlobalTokenIds != null)
+                if (_cachedModelInputs != null && _cachedGlobalTokenIds != null)
                 {
                     // Use the more efficient update method if we already have tokenized inputs
                     TokenizationOutput updatedInputs = _sparkTts.UpdateTextInTokenizedInputs(
