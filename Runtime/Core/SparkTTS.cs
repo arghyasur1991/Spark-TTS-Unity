@@ -148,13 +148,6 @@ namespace SparkTTS.Core
                 _encoderQuantizerModel = new BiCodecEncoderQuantizerModel();
                 Logger.Log("[SparkTTS] ONNX Models Initialized.");
 
-                // --- Initialize Higher-Level SparkTTS Components ---
-                Logger.Log("[SparkTTS] Initializing SparkTTS Components...");
-                // Check if models needed by AudioTokenizer are initialized
-                if (!_melModel.IsInitialized || !_speakerEncoderModel.IsInitialized || !_wav2Vec2Model.IsInitialized || !_encoderQuantizerModel.IsInitialized)
-                {
-                    throw new InvalidOperationException("One or more models required by SparkTTSAudioTokenizer (Mel, SpeakerEncoder, Wav2Vec2, EncQuant) failed to initialize.");
-                }
                 _audioTokenizer = new SparkTTSAudioTokenizer(
                     _audioLoaderService,
                     _melModel,
@@ -171,24 +164,8 @@ namespace SparkTTS.Core
                 _vocoderTimer = new AggregatedTimer("Vocoder");
                 _audioLoaderTimer = new AggregatedTimer("Audio Loader");
                 _updateTextInTokenizedInputsTimer = new AggregatedTimer("Update Text in Tokenized Inputs");
-                // Initialize the main SparkTTS model coordinator
-                // Check if models directly used by SparkTTS or critical for its operation are initialized.
-                if (!_llmModel.IsInitialized || !_vocoderModel.IsInitialized) // AudioTokenizer init already checked others
-                {
-                    throw new InvalidOperationException("One or more core models (LLM, Vocoder) are not initialized.");
-                }
                 
                 _biCodec = new SparkTTSBiCodec(_vocoderModel, _encoderQuantizerModel);
-
-                if (!_llmModel.IsInitialized || !_biCodec.IsInitialized)
-                {
-                    Logger.LogError("[SparkTTS] One or more dependent models/services are not initialized.");
-                    IsInitialized = false;
-                    return;
-                }
-                IsInitialized = true;
-                Logger.Log("[SparkTTS] Initialized.");
-
                 IsInitialized = true;
                 Logger.Log("[SparkTTS] Successfully initialized all components.");
             }

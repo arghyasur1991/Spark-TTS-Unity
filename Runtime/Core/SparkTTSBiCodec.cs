@@ -14,8 +14,6 @@ namespace SparkTTS.Core
     {
         private readonly VocoderModel _vocoderModel;
         private readonly BiCodecEncoderQuantizerModel _encoderQuantizerModel;
-
-        public bool IsInitialized { get; private set; } = false;
         private bool _disposed = false;
 
         /// <summary>
@@ -27,16 +25,6 @@ namespace SparkTTS.Core
         {
             _vocoderModel = vocoderModel ?? throw new ArgumentNullException(nameof(vocoderModel));
             _encoderQuantizerModel = encoderQuantizerModel ?? throw new ArgumentNullException(nameof(encoderQuantizerModel));
-
-            if (!_vocoderModel.IsInitialized || !_encoderQuantizerModel.IsInitialized)
-            {
-                Logger.LogError("[SparkTTSBiCodec] One or more dependent models are not initialized.");
-                IsInitialized = false;
-            }
-            else
-            {
-                IsInitialized = true;
-            }
         }
 
         /// <summary>
@@ -46,13 +34,7 @@ namespace SparkTTS.Core
         /// <param name="shape">Shape of the feature tensor</param>
         /// <returns>A task containing list of semantic token IDs</returns>
         public async Task<List<long>> TokenizeAsync(float[] features, int[] shape)
-        {
-            if (!IsInitialized)
-            {
-                Logger.LogError("[SparkTTSBiCodec.Tokenize] Not initialized.");
-                return null;
-            }
-            
+        {            
             var result = await _encoderQuantizerModel.GenerateSemanticTokensAsync(features, shape);
             if (result.HasValue)
             {
@@ -70,12 +52,6 @@ namespace SparkTTS.Core
         /// <returns>A task containing synthesized audio waveform as float array</returns>
         public async Task<float[]> DetokenizeAsync(long[] semanticTokens, int[] globalTokens)
         {
-            if (!IsInitialized)
-            {
-                Logger.LogError("[SparkTTSBiCodec.Detokenize] Not initialized.");
-                return null;
-            }
-            
             if (semanticTokens == null || globalTokens == null)
             {
                 Logger.LogError("[SparkTTSBiCodec.Detokenize] Input tokens are null.");

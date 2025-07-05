@@ -388,6 +388,7 @@ namespace SparkTTS.Models
                     Logger.LogError($"[{_config.ModelName}] Model file not found: {_config.ModelPath}");
                     throw new FileNotFoundException($"Model file not found: {_config.ModelPath}");
                 }
+                Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName}");
 
                 try
                 {
