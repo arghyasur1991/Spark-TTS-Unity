@@ -99,12 +99,13 @@ namespace SparkTTS.Models
             _config = new ModelConfig
             {
                 ModelName = modelName,
-                ModelFolder = modelFolder,
                 Precision = precision,
-                ExecutionProvider = executionProvider
+                ExecutionProvider = executionProvider,
+                ModelPath = Path.Combine(
+                    Application.streamingAssetsPath,
+                    SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets,
+                    modelFolder)
             };
-
-            SetModelPath(modelFolder, modelName);
             _loadTask = LoadModelAsync();
         }
 
@@ -336,7 +337,7 @@ namespace SparkTTS.Models
         /// </summary>
         /// <param name="modelFolder">The subfolder for the model</param>
         /// <param name="modelName">The model name</param>
-        protected void SetModelPath(string modelFolder, string modelName)
+        protected string GetModelPath(string modelName)
         {
             if (_config.Precision == Precision.FP16)
             {
@@ -346,10 +347,8 @@ namespace SparkTTS.Models
             {
                 modelName = $"{modelName}_int8";
             }
-            _config.ModelPath = Path.Combine(
-                Application.streamingAssetsPath,
-                SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets,
-                modelFolder,
+            return Path.Combine(
+                _config.ModelPath,
                 $"{modelName}.onnx");
         }
 
@@ -406,10 +405,11 @@ namespace SparkTTS.Models
         {
             return await Task.Run(() =>
             {
-                if (!File.Exists(_config.ModelPath))
+                string modelPath = GetModelPath(_config.ModelName);
+                if (!File.Exists(modelPath))
                 {
-                    Logger.LogError($"[{_config.ModelName}] Model file not found: {_config.ModelPath}");
-                    throw new FileNotFoundException($"Model file not found: {_config.ModelPath}");
+                    Logger.LogError($"[{_config.ModelName}] Model file not found: {modelPath}");
+                    throw new FileNotFoundException($"Model file not found: {modelPath}");
                 }
                 Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName}");
 
@@ -419,11 +419,11 @@ namespace SparkTTS.Models
 
                     if (_config.ExecutionProvider == ExecutionProvider.CoreML) 
                     {
-                        LoadModelWithCoreML(_config.ModelPath, options);
+                        LoadModelWithCoreML(modelPath, options);
                     }
                     else
                     {
-                        _session = new InferenceSession(_config.ModelPath, options);
+                        _session = new InferenceSession(modelPath, options);
                     }
                     
                     // Initialize input/output metadata
@@ -452,7 +452,7 @@ namespace SparkTTS.Models
                     }
                     
                     IsInitialized = true;
-                    Logger.Log($"[{_config.ModelName}] Successfully loaded model: {_config.ModelPath}");
+                    Logger.Log($"[{_config.ModelName}] Successfully loaded model: {modelPath}");
                     return _session;
                 }
                 catch (Exception ex)
@@ -723,7 +723,6 @@ namespace SparkTTS.Models
         private class ModelConfig
         {
             public string ModelName { get; set; }
-            public string ModelFolder { get; set; }
             public string ModelPath { get; set; }
             public Precision Precision { get; set; } = Precision.FP32;
             public ExecutionProvider ExecutionProvider { get; set; } = ExecutionProvider.CPU;
