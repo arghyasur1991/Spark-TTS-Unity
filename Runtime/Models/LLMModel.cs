@@ -119,7 +119,7 @@ namespace SparkTTS.Models
             try
             {
                 // Wait for model to be loaded
-                await Task.Delay(100); // Give the base class time to load
+                await _loadTask;
                 
                 // Get preallocated outputs to inspect metadata
                 var outputs = await GetPreallocatedOutputs();
@@ -562,7 +562,7 @@ namespace SparkTTS.Models
                 }
 
                 // Run inference using the new pattern
-                var outputs = await Run();
+                var outputs = await RunDisposable();
                 
                 // Create output structure
                 var output = new InferenceOutput();

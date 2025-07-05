@@ -27,7 +27,7 @@ namespace SparkTTS.Models
         private List<string> _inputNames = new();
         private List<NamedOnnxValue> _inputs;
         private List<NamedOnnxValue> _preallocatedOutputs;
-        private readonly Task<InferenceSession> _loadTask;
+        protected readonly Task<InferenceSession> _loadTask;
         private bool _disposed = false;
         
         // Static logging configuration
@@ -162,6 +162,7 @@ namespace SparkTTS.Models
             
             try
             {
+                Logger.Log($"[{_config.ModelName}] Running model");
                 _session.Run(_inputs, _preallocatedOutputs, runOptions);
             }
             catch (Exception ex)
@@ -217,6 +218,7 @@ namespace SparkTTS.Models
             IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
             try
             {
+                Logger.Log($"[{_config.ModelName}] Running model");
                 results = _session.Run(_inputs, _session.OutputNames, runOptions);
             }
             catch (Exception ex)

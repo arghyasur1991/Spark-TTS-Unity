@@ -65,15 +65,10 @@ namespace SparkTTS.Models
 
                 // Load inputs using the consistent pattern
                 await LoadInput(0, semanticTensor);
-                
-                // Convert int tensor to float tensor for compatibility
-                var globalTensorFloat = new DenseTensor<float>(
-                    globalTokens.Select(x => (float)x).ToArray(), 
-                    globalTokensShape);
-                await LoadInput(1, globalTensorFloat);
+                await LoadInput(1, globalTensor);
 
                 // Run inference
-                var outputs = await Run();
+                var outputs = await RunDisposable();
                 
                 // Get the first output (waveform)
                 var outputValue = outputs.FirstOrDefault();

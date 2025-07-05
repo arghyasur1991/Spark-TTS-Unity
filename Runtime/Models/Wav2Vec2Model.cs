@@ -53,7 +53,7 @@ namespace SparkTTS.Models
             try
             {
                 // Use the new LoadInput/Run pattern
-                var outputs = await Run(inputs);
+                var outputs = await RunDisposable(inputs);
                 
                 // Get the first output (features)
                 var outputValue = outputs.FirstOrDefault();
