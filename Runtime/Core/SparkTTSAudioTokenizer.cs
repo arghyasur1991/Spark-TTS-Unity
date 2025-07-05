@@ -33,13 +33,13 @@ namespace SparkTTS.Core
             _wav2vec2Model = wav2vec2Model ?? throw new ArgumentNullException(nameof(wav2vec2Model));
             _encoderQuantizerModel = encoderQuantizerModel ?? throw new ArgumentNullException(nameof(encoderQuantizerModel));
 
-            Logger.Log("[SparkTTSAudioTokenizer] Initialized with all required models.");
+            Logger.LogVerbose("[SparkTTSAudioTokenizer] Initialized with all required models.");
         }
 
         public void Dispose()
         {
             // ORTModel base class handles session disposal
-            Logger.Log("[SparkTTSAudioTokenizer] Disposed (models handled by ORTModel base).");
+            Logger.LogVerbose("[SparkTTSAudioTokenizer] Disposed (models handled by ORTModel base).");
         }
 
         /// <summary>
@@ -73,34 +73,34 @@ namespace SparkTTS.Core
             try
             { 
                 // --- 1. Get Global Speaker Tokens --- 
-                Logger.Log("[SparkTTSAudioTokenizer] Generating Mel Spectrogram for Speaker Encoder...");
+                Logger.LogVerbose("[SparkTTSAudioTokenizer] Generating Mel Spectrogram for Speaker Encoder...");
                 (float[] melData, int[] melShape)? rawMelTuple = await _melModel.GenerateMelSpectrogramAsync(refAudioSamples);
                 if (!rawMelTuple.HasValue) { Logger.LogError("[SparkTTSAudioTokenizer] Failed to generate raw mel spectrogram."); return (null, null); }
 
                 (float[] processedMelData, int[] processedMelShape)? processedMelTuple = _melModel.ProcessMelForSpeakerEncoder(rawMelTuple.Value);
                 if (!processedMelTuple.HasValue) { Logger.LogError("[SparkTTSAudioTokenizer] Failed to process mel spectrogram for speaker encoder."); return (null, null); }
                 
-                Logger.Log("[SparkTTSAudioTokenizer] Generating Global Speaker Tokens...");
+                Logger.LogVerbose("[SparkTTSAudioTokenizer] Generating Global Speaker Tokens...");
                 globalTokens = await _speakerEncoderModel.GenerateTokensAsync(processedMelTuple.Value);
                 if (globalTokens == null || globalTokens.Length == 0)
                 {
                     Logger.LogError("[SparkTTSAudioTokenizer] Speaker encoding failed or produced null/empty global tokens array.");
                     return (null, null);
                 }
-                Logger.Log($"[SparkTTSAudioTokenizer] Generated {globalTokens.Length} global speaker tokens.");
+                Logger.LogVerbose($"[SparkTTSAudioTokenizer] Generated {globalTokens.Length} global speaker tokens.");
 
 
                 // --- 2. Get Semantic Tokens --- 
-                Logger.Log("[SparkTTSAudioTokenizer] Generating Wav2Vec2 Features...");
+                Logger.LogVerbose("[SparkTTSAudioTokenizer] Generating Wav2Vec2 Features...");
                 (float[] featuresData, int[] featuresShape)? featuresResult = await _wav2vec2Model.GenerateFeaturesAsync(refAudioSamples);
                 if (!featuresResult.HasValue)
                 {
                     Logger.LogError("[SparkTTSAudioTokenizer] Wav2Vec2 feature generation failed.");
                     return (globalTokens, null); // Return global tokens, but semantic failed
                 }
-                Logger.Log($"[SparkTTSAudioTokenizer] Generated Wav2Vec2 features with shape: [{string.Join(",", featuresResult.Value.featuresShape)}]");
+                Logger.LogVerbose($"[SparkTTSAudioTokenizer] Generated Wav2Vec2 features with shape: [{string.Join(",", featuresResult.Value.featuresShape)}]");
 
-                Logger.Log("[SparkTTSAudioTokenizer] Generating Semantic Tokens from features...");
+                Logger.LogVerbose("[SparkTTSAudioTokenizer] Generating Semantic Tokens from features...");
                 semanticTokensResult = await _encoderQuantizerModel.GenerateSemanticTokensAsync(featuresResult.Value.featuresData, featuresResult.Value.featuresShape);
                 if (!semanticTokensResult.HasValue)
                 {
@@ -109,7 +109,7 @@ namespace SparkTTS.Core
                 }
 
                 semanticTokensList = new List<long>(semanticTokensResult.Value.semanticTokensData);
-                Logger.Log($"[SparkTTSAudioTokenizer] BiCodecEncoderQuantizer generated {semanticTokensList.Count} semantic tokens (Shape: [{string.Join(",", semanticTokensResult.Value.semanticTokensShape)}]). First 10: [{string.Join(", ", semanticTokensList.Take(10))}]");
+                Logger.LogVerbose($"[SparkTTSAudioTokenizer] BiCodecEncoderQuantizer generated {semanticTokensList.Count} semantic tokens (Shape: [{string.Join(",", semanticTokensResult.Value.semanticTokensShape)}]). First 10: [{string.Join(", ", semanticTokensList.Take(10))}]");
                 if (semanticTokensList.Count == 0)
                 {
                     Logger.LogWarning("[SparkTTSAudioTokenizer] BiCodecEncoderQuantizer generated an EMPTY list of semantic tokens from reference audio.");

@@ -109,12 +109,12 @@ namespace SparkTTS.Core
             {
                 _audioLoaderService = new AudioLoaderService();
                 // --- Initialize Text Tokenizer Service ---
-                Logger.Log("[SparkTTS] Initializing TokenizerService...");
+                Logger.LogVerbose("[SparkTTS] Initializing TokenizerService...");
                 string llmModelFolder = config.LLMModelFolder ?? SparkTTSModelPaths.LLMFolder;
                 string tokenizerRelativePath = Path.Combine(SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets, llmModelFolder, "tokenizer.json");
                 string fullTokenizerPath = Path.Combine(Application.streamingAssetsPath, tokenizerRelativePath);
 
-                Logger.Log($"[SparkTTS] Attempting to load tokenizer.json from: {fullTokenizerPath}");
+                Logger.LogVerbose($"[SparkTTS] Attempting to load tokenizer.json from: {fullTokenizerPath}");
 
                 if (!File.Exists(fullTokenizerPath))
                 {
@@ -136,17 +136,17 @@ namespace SparkTTS.Core
                 int eosTokenId = 151645; 
                 int padTokenId = 151643;
                 _textTokenizerService = new TokenizerService(tokenizerDef, bosTokenId, eosTokenId, padTokenId);
-                Logger.Log("[SparkTTS] TokenizerService Initialized.");
+                Logger.LogVerbose("[SparkTTS] TokenizerService Initialized.");
 
                 // --- Initialize ONNX Models ---
-                Logger.Log("[SparkTTS] Initializing ONNX Models...");
+                Logger.LogVerbose("[SparkTTS] Initializing ONNX Models...");
                 _melModel = new MelSpectrogramModel();
                 _speakerEncoderModel = new SpeakerEncoderModel();
                 _llmModel = new LLMModel(tokenizerDef); // Pass tokenizer definition
                 _vocoderModel = new VocoderModel();
                 _wav2Vec2Model = new Wav2Vec2Model();
                 _encoderQuantizerModel = new BiCodecEncoderQuantizerModel();
-                Logger.Log("[SparkTTS] ONNX Models Initialized.");
+                Logger.LogVerbose("[SparkTTS] ONNX Models Initialized.");
 
                 _audioTokenizer = new SparkTTSAudioTokenizer(
                     _audioLoaderService,
@@ -167,7 +167,7 @@ namespace SparkTTS.Core
                 
                 _biCodec = new SparkTTSBiCodec(_vocoderModel, _encoderQuantizerModel);
                 IsInitialized = true;
-                Logger.Log("[SparkTTS] Successfully initialized all components.");
+                Logger.LogVerbose("[SparkTTS] Successfully initialized all components.");
             }
             catch (Exception e)
             {
@@ -391,9 +391,9 @@ namespace SparkTTS.Core
             List<int> globalTokensForBiCodec = new();
             if (isControlMode)
             {
-                Logger.Log($"[SparkTTS.Inference DEBUG STYLE] Decoded LLM Output (Style Control):\n{decodedOutput}");
+                Logger.LogVerbose($"[SparkTTS.Inference DEBUG STYLE] Decoded LLM Output (Style Control):\n{decodedOutput}");
                 globalTokensForBiCodec = ExtractGlobalTokens(decodedOutput);
-                Logger.Log($"[SparkTTS.Inference DEBUG STYLE] Extracted Global Tokens (Style Control): [{string.Join(", ", globalTokensForBiCodec)}]");
+                Logger.LogVerbose($"[SparkTTS.Inference DEBUG STYLE] Extracted Global Tokens (Style Control): [{string.Join(", ", globalTokensForBiCodec)}]");
 
                 if (globalTokensForBiCodec.Count == 0)
                 {
@@ -424,14 +424,14 @@ namespace SparkTTS.Core
 
             // Step 4: Generate waveform from tokens
             var startAudioConversion = Stopwatch.GetTimestamp();
-            Logger.Log($"[SparkTTS.Inference] Generating waveform from tokens: {semanticTokenIds.Count} semantic tokens, {globalTokensForBiCodec.Count} global tokens");
+            Logger.LogVerbose($"[SparkTTS.Inference] Generating waveform from tokens: {semanticTokenIds.Count} semantic tokens, {globalTokensForBiCodec.Count} global tokens");
 
             // Use the appropriate global tokens (extracted for control mode, from input for cloning)
             float[] waveform = await _biCodec.DetokenizeToWaveformAsync(semanticTokenIds, globalTokensForBiCodec);
             var endAudioConversion = Stopwatch.GetTimestamp();
             _vocoderTimer.AddTiming(startAudioConversion, endAudioConversion);
 
-            Logger.Log($"[SparkTTS.Inference] Waveform generated");
+            Logger.LogVerbose($"[SparkTTS.Inference] Waveform generated");
             endTime = Stopwatch.GetTimestamp();
             _totalTimer.AddTiming(startTime, endTime);
 
@@ -500,7 +500,7 @@ namespace SparkTTS.Core
                     Logger.LogWarning($"[SparkTTS.ExtractGlobalTokens] Failed to parse global token ID from: {match.Value}");
                 }
             }
-            Logger.Log($"[SparkTTS.ExtractGlobalTokens] Extracted {globalTokenIds.Count} global tokens.");
+            Logger.LogVerbose($"[SparkTTS.ExtractGlobalTokens] Extracted {globalTokenIds.Count} global tokens.");
             return globalTokenIds;
         }
 
@@ -556,7 +556,7 @@ namespace SparkTTS.Core
                 }
             }
 
-            Logger.Log($"[SparkTTS.UpdateTextInTokenizedInputs] New prompt: {newPrompt}");
+            Logger.LogVerbose($"[SparkTTS.UpdateTextInTokenizedInputs] New prompt: {newPrompt}");
 
             // Re-tokenize with the new text
             var result = _textTokenizerService.Encode(newPrompt);
@@ -593,7 +593,7 @@ namespace SparkTTS.Core
                 _textTokenizerService = null;
                 _audioLoaderService = null; // Ditto
                 _textTokenizerService = null;
-                Logger.Log("[SparkTTS] Disposed (references cleared).");
+                Logger.LogVerbose("[SparkTTS] Disposed (references cleared).");
             }
             IsInitialized = false;
             _disposed = true;

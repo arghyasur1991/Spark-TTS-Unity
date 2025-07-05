@@ -23,7 +23,7 @@ namespace SparkTTS.Models
             : base(SparkTTSModelPaths.SpeakerEncoderModelName, 
                    SparkTTSModelPaths.SpeakerEncoderFolder)
         {
-            Logger.Log("[SpeakerEncoderModel] Initialized successfully");
+            Logger.LogVerbose("[SpeakerEncoderModel] Initialized successfully");
         }
 
         /// <summary>

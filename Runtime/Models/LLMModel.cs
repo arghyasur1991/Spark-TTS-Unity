@@ -104,7 +104,7 @@ namespace SparkTTS.Models
                 LogSeverityLevel = OrtLogLevel
             };
 
-            Logger.Log("[LLMModel] Initialized successfully");
+            Logger.LogVerbose("[LLMModel] Initialized successfully");
             
             // Initialize model metadata asynchronously
             _ = InitializeModelMetadataAsync();
@@ -184,7 +184,7 @@ namespace SparkTTS.Models
                         _outputNames.Add(valueName);
                 }
                 
-                Logger.Log($"[LLMModel] Model metadata initialized dynamically - " +
+                Logger.LogVerbose($"[LLMModel] Model metadata initialized dynamically - " +
                           $"Layers: {_numLLMLayers}, Heads: {_numAttentionHeads}, HeadDim: {_headDimension}");
                           
                 if (_numLLMLayers == 0)
@@ -261,7 +261,7 @@ namespace SparkTTS.Models
             {
                 var startTime = Stopwatch.GetTimestamp();
                 // 1. Process initial prompt
-                Logger.Log("[LLM.GenTokens] Preparing initial prompt processing pass...");
+                Logger.LogVerbose("[LLM.GenTokens] Preparing initial prompt processing pass...");
                 
                 // Convert input IDs - avoid multiple enumerations with ToArray outside of Select
                 int[] intInputIds = llmInitialInput.InputIds.ToArray();
@@ -294,13 +294,13 @@ namespace SparkTTS.Models
                     topK, 
                     topP);
 
-                Logger.Log($"[LLMModel.GenTokens InitialPass] Next token ID: {nextTokenId}");
+                Logger.LogVerbose($"[LLMModel.GenTokens InitialPass] Next token ID: {nextTokenId}");
                 newlyGeneratedTokenIds.Add(nextTokenId);
 
                 // Check if generation should end
                 if (nextTokenId == _eosTokenId)
                 {
-                    Logger.Log("[LLMModel.GenTokens] EOS token generated after initial prompt. Stopping.");
+                    Logger.LogVerbose("[LLMModel.GenTokens] EOS token generated after initial prompt. Stopping.");
                     return newlyGeneratedTokenIds;
                 }
 
@@ -310,7 +310,7 @@ namespace SparkTTS.Models
                 // 2. Autoregressive generation loop
                 for (int step = 0; step < maxNewTokens - 1; ++step) // -1 because one token already generated
                 {
-                    Logger.Log($"--- [LLMModel.GenTokens Loop] Step {step} --- (Generating token {newlyGeneratedTokenIds.Count + 1})");
+                    Logger.LogVerbose($"--- [LLMModel.GenTokens Loop] Step {step} --- (Generating token {newlyGeneratedTokenIds.Count + 1})");
                     int currentTokenIdForInput = newlyGeneratedTokenIds[newlyGeneratedTokenIds.Count - 1];
                     
                     // Generate inputs for single token step
@@ -335,13 +335,13 @@ namespace SparkTTS.Models
                         topK, 
                         topP);
 
-                    Logger.Log($"[LLMModel.GenTokens Loop Step {step}] Next token ID: {nextTokenId}");
+                    Logger.LogVerbose($"[LLMModel.GenTokens Loop Step {step}] Next token ID: {nextTokenId}");
                     newlyGeneratedTokenIds.Add(nextTokenId);
 
                     // Check if generation should end
                     if (nextTokenId == _eosTokenId)
                     {
-                        Logger.Log($"[LLMModel.GenTokens] EOS token generated at step {step}. Stopping.");
+                        Logger.LogVerbose($"[LLMModel.GenTokens] EOS token generated at step {step}. Stopping.");
                         break;
                     }
 
@@ -396,7 +396,7 @@ namespace SparkTTS.Models
             DenseTensor<long> inputIdsTensor = new(new Memory<long>(inputIdsData), inputIdsShape);
             inputsForCurrentStep.Add(NamedOnnxValue.CreateFromTensor<long>(_inputIDsName, inputIdsTensor));
 
-            Logger.Log($"[LLM.GenTokens] Input IDs for initial pass ({inputIdsData.Length}): [{string.Join(", ", inputIdsData.Take(50))}{(inputIdsData.Length > 50 ? "..." : "")}]");
+            Logger.LogVerbose($"[LLM.GenTokens] Input IDs for initial pass ({inputIdsData.Length}): [{string.Join(", ", inputIdsData.Take(50))}{(inputIdsData.Length > 50 ? "..." : "")}]");
 
             // Attention mask tensor
             if (!string.IsNullOrEmpty(_attentionMaskName) && attentionMaskData != null)
@@ -532,7 +532,7 @@ namespace SparkTTS.Models
                 return null;
             }
 
-            Logger.Log($"[LLMModel.RunInference] Running inference with {inputs.Count} inputs. Extract KV: {extractKvCache}");
+            Logger.LogVerbose($"[LLMModel.RunInference] Running inference with {inputs.Count} inputs. Extract KV: {extractKvCache}");
 
             try
             {

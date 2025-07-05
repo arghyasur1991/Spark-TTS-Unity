@@ -29,7 +29,7 @@ namespace SparkTTS.Models
             : base(SparkTTSModelPaths.MelSpectrogramModelName, 
                    SparkTTSModelPaths.MelSpectrogramFolder)
         {
-            Logger.Log("[MelSpectrogramModel] Initialized successfully");
+            Logger.LogVerbose("[MelSpectrogramModel] Initialized successfully");
             
             // Initialize the output mel bands determination asynchronously
             _ = InitializeOutputMelBandsAsync();
@@ -50,7 +50,7 @@ namespace SparkTTS.Models
                     if (dimensions.Length == 3)
                     {
                         OutputNumMelBands = dimensions[1];
-                        Logger.Log($"[MelSpectrogramModel] Determined OutputNumMelBands: {OutputNumMelBands}");
+                        Logger.LogVerbose($"[MelSpectrogramModel] Determined OutputNumMelBands: {OutputNumMelBands}");
                     }
                     else
                     {
@@ -117,7 +117,7 @@ namespace SparkTTS.Models
                     Logger.LogWarning($"[MelSpectrogramModel] Model outputted {melShape[1]} bands, but determined OutputNumMelBands was {OutputNumMelBands}");
                 }
                 
-                Logger.Log($"[MelSpectrogramModel] Successfully generated mel spectrogram with shape: [{string.Join(",", melShape)}]");
+                Logger.LogVerbose($"[MelSpectrogramModel] Successfully generated mel spectrogram with shape: [{string.Join(",", melShape)}]");
                 
                 return (melData, melShape);
             }
@@ -177,7 +177,7 @@ namespace SparkTTS.Models
                 
                 var processedShape = new int[] { 1, numFrames, bandsToProcess };
                 
-                Logger.Log($"[MelSpectrogramModel] Processed mel spectrogram: {rawMelShape[1]} -> {bandsToProcess} bands, " +
+                Logger.LogVerbose($"[MelSpectrogramModel] Processed mel spectrogram: {rawMelShape[1]} -> {bandsToProcess} bands, " +
                           $"{numFrames} frames");
                 
                 return (permutedMelData, processedShape);

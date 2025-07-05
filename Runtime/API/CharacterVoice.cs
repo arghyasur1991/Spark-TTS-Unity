@@ -228,13 +228,13 @@ namespace SparkTTS
                         modelInputs: updatedInputs,
                         globalTokenIds: _cachedGlobalTokenIds);
                     
-                    Logger.Log("[CharacterVoice.GenerateSpeech] Used optimized generation with updated tokenized inputs");
+                    Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Used optimized generation with updated tokenized inputs");
                 }
                 else
                 {
                     // Run standard inference for first-time generation
                     result = await _sparkTts.InferenceAsync(text, _referenceWaveform, null, Gender, Pitch, Speed);
-                    Logger.Log("[CharacterVoice.GenerateSpeech] Used standard generation path");
+                    Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Used standard generation path");
                 }
                 
                 if (!result.Success || result.Waveform == null || result.Waveform.Length == 0)
@@ -258,13 +258,13 @@ namespace SparkTTS
                 if (_cachedGlobalTokenIds == null && result.GlobalTokenIds != null)
                 {
                     _cachedGlobalTokenIds = result.GlobalTokenIds;
-                    Logger.Log("[CharacterVoice.GenerateSpeech] Cached global tokens for future optimizations");
+                    Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Cached global tokens for future optimizations");
                 }
                 
                 if (_cachedModelInputs == null && result.ModelInputs != null)
                 {
                     _cachedModelInputs = result.ModelInputs;
-                    Logger.Log("[CharacterVoice.GenerateSpeech] Cached model inputs for future optimizations");
+                    Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Cached model inputs for future optimizations");
                 }
                 
                 return clip;

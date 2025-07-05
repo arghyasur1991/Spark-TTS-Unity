@@ -23,7 +23,7 @@ namespace SparkTTS.Models
             : base(SparkTTSModelPaths.VocoderModelName, 
                    SparkTTSModelPaths.VocoderFolder)
         {
-            Logger.Log("[VocoderModel] Initialized successfully");
+            Logger.LogVerbose("[VocoderModel] Initialized successfully");
         }
 
         /// <summary>
@@ -53,7 +53,7 @@ namespace SparkTTS.Models
             if (globalTokensShape.Length != 3)
                 throw new ArgumentException("Global tokens shape must be 3D", nameof(globalTokensShape));
 
-            Logger.Log($"[VocoderModel] Synthesizing with:" +
+            Logger.LogVerbose($"[VocoderModel] Synthesizing with:" +
                       $"\n  semanticTokens: {semanticTokens.Length} elements, shape: [{string.Join(",", semanticTokensShape)}]" +
                       $"\n  globalTokens: {globalTokens.Length} elements, shape: [{string.Join(",", globalTokensShape)}]");
 
@@ -83,7 +83,7 @@ namespace SparkTTS.Models
                 }
                 
                 var waveform = outputTensor.Buffer.ToArray();
-                Logger.Log($"[VocoderModel] Successfully synthesized waveform with {waveform.Length} samples");
+                Logger.LogVerbose($"[VocoderModel] Successfully synthesized waveform with {waveform.Length} samples");
                 
                 return waveform;
             }
