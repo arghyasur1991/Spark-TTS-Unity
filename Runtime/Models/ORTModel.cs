@@ -80,31 +80,12 @@ namespace SparkTTS.Models
         #region Public Methods - Input Loading
 
         /// <summary>
-        /// Asynchronously loads a float tensor input at the specified index.
+        /// Asynchronously loads a tensor input at the specified index.
         /// </summary>
         /// <param name="index">The index of the input to load</param>
-        /// <param name="inputTensor">The float tensor to load as input</param>
+        /// <param name="inputTensor">The tensor to load as input</param>
         /// <returns>A task that represents the asynchronous input loading operation</returns>
-        public async Task LoadInput(int index, Tensor<float> inputTensor)
-        {
-            if (inputTensor == null)
-                throw new ArgumentNullException(nameof(inputTensor));
-                
-            await _loadTask;
-            
-            if (index < 0 || index >= _inputNames.Count)
-                throw new ArgumentOutOfRangeException(nameof(index), $"Index must be between 0 and {_inputNames.Count - 1}");
-                
-            _inputs.Add(NamedOnnxValue.CreateFromTensor(_inputNames[index], inputTensor));
-        }
-
-        /// <summary>
-        /// Asynchronously loads a long tensor input at the specified index.
-        /// </summary>
-        /// <param name="index">The index of the input to load</param>
-        /// <param name="inputTensor">The long tensor to load as input</param>
-        /// <returns>A task that represents the asynchronous input loading operation</returns>
-        public async Task LoadInput(int index, Tensor<long> inputTensor)
+        public async Task LoadInput<T>(int index, Tensor<T> inputTensor)
         {
             if (inputTensor == null)
                 throw new ArgumentNullException(nameof(inputTensor));
@@ -413,6 +394,10 @@ namespace SparkTTS.Models
                         else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
                         {
                             CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
+                        }
+                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
+                        {
+                            CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
                         }
                     }
                     
