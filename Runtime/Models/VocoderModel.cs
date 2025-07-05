@@ -19,11 +19,9 @@ namespace SparkTTS.Models
         /// <summary>
         /// Initializes a new instance of the VocoderModel class.
         /// </summary>
-        /// <param name="logLevel">The logging level for this model instance</param>
-        public VocoderModel(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+        public VocoderModel()
             : base(SparkTTSModelPaths.VocoderModelName, 
-                   SparkTTSModelPaths.VocoderFolder, 
-                   logLevel)
+                   SparkTTSModelPaths.VocoderFolder)
         {
             Logger.Log("[VocoderModel] Initialized successfully");
         }

@@ -92,8 +92,6 @@ namespace SparkTTS.Core
         private readonly AggregatedTimer _updateTextInTokenizedInputsTimer;
         public static bool LogTiming = false;
 
-        public static DebugLogger Logger = new();
-
         public bool IsInitialized { get; private set; } = false;
         private bool _disposed = false;
 

@@ -15,15 +15,11 @@ namespace SparkTTS
         public static CharacterVoiceFactory Instance { get; private set; } = new();
 
         public bool LogTiming { get => SparkTTS.LogTiming; set => SparkTTS.LogTiming = value; }
-
-        public DebugLogger.LogLevel LogLevel { get => SparkTTS.Logger.Level; set => SparkTTS.Logger.Level = value; }
         
         private SparkTTS _sparkTts;
         private bool _disposed = false;
         private bool _initialized = false;
         private Task _initializeTask;
-        
-        public static DebugLogger Logger = new();
         
         /// <summary>
         /// Initializes a new instance of the CharacterVoiceFactory.
@@ -41,9 +37,9 @@ namespace SparkTTS
             });
         }
 
-        public static void Initialize(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+        public static void Initialize(LogLevel logLevel = LogLevel.INFO)
         {
-            Logger.Level = logLevel;
+            Logger.LogLevel = logLevel;
             ORTModel.InitializeEnvironment();
         }
         

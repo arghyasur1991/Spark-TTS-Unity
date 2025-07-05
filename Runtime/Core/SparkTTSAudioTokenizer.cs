@@ -18,8 +18,6 @@ namespace SparkTTS.Core
         private readonly Wav2Vec2Model _wav2vec2Model;
         private readonly BiCodecEncoderQuantizerModel _encoderQuantizerModel;
 
-        public static DebugLogger Logger = new();
-
         /// <summary>
         /// Initializes a new instance of SparkTTSAudioTokenizer with required model components
         /// </summary>

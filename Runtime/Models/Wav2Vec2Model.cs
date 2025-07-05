@@ -17,16 +17,12 @@ namespace SparkTTS.Models
     /// </summary>
     internal class Wav2Vec2Model : ORTModel
     {
-        public static new DebugLogger Logger = new();
-
         /// <summary>
         /// Initializes a new instance of the Wav2Vec2Model class.
         /// </summary>
-        /// <param name="logLevel">The logging level for this model instance</param>
-        public Wav2Vec2Model(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+        public Wav2Vec2Model()
             : base(SparkTTSModelPaths.Wav2Vec2ModelName, 
-                   SparkTTSModelPaths.Wav2Vec2Folder, 
-                   logLevel)
+                   SparkTTSModelPaths.Wav2Vec2Folder)
         {
             Logger.Log("[Wav2Vec2Model] Initialized successfully");
         }

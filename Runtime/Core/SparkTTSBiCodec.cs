@@ -12,8 +12,6 @@ namespace SparkTTS.Core
     /// </summary>
     internal class SparkTTSBiCodec : IDisposable
     {
-        public static DebugLogger Logger = new();
-
         private readonly VocoderModel _vocoderModel;
         private readonly BiCodecEncoderQuantizerModel _encoderQuantizerModel;
 

@@ -29,8 +29,6 @@ namespace SparkTTS
         private bool _disposed = false;
         private float[] _referenceWaveform = null;
         
-        public static DebugLogger Logger = new();
-        
         // Constructor - Private to enforce use of factory
         internal CharacterVoice(
             SparkTTS sparkTts,

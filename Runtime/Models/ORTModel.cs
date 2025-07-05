@@ -40,11 +40,6 @@ namespace SparkTTS.Models
         #region Protected Properties
 
         /// <summary>
-        /// Gets the debug logger instance for this model.
-        /// </summary>
-        protected static DebugLogger Logger { get; } = new();
-
-        /// <summary>
         /// Gets whether the model has been successfully initialized.
         /// </summary>
         public bool IsInitialized { get; protected set; } = false;
@@ -63,16 +58,12 @@ namespace SparkTTS.Models
         /// </summary>
         /// <param name="modelName">The name of the model file (without extension)</param>
         /// <param name="modelFolder">The folder containing the model (from SparkTTSModelPaths)</param>
-        /// <param name="logLevel">The logging level for this model</param>
-        protected ORTModel(string modelName, string modelFolder, DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+        protected ORTModel(string modelName, string modelFolder)
         {
             if (string.IsNullOrEmpty(modelName))
                 throw new ArgumentNullException(nameof(modelName));
-            if (string.IsNullOrEmpty(modelFolder))
+            if (modelFolder == null)
                 throw new ArgumentNullException(nameof(modelFolder));
-
-            Logger.Level = logLevel;
-            InitializeOnnxLogging();
             
             _config = new ModelConfig
             {
@@ -307,15 +298,14 @@ namespace SparkTTS.Models
         /// Initializes the ONNX Runtime environment with the specified logging level.
         /// </summary>
         /// <param name="logLevel">The logging level for ONNX Runtime operations</param>
-        public static void InitializeEnvironment(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+        public static void InitializeEnvironment(LogLevel logLevel = LogLevel.WARNING)
         {
-            Logger.Level = logLevel;
             _ortLogLevel = logLevel switch
             {
-                DebugLogger.LogLevel.Error => OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-                DebugLogger.LogLevel.Warning => OrtLoggingLevel.ORT_LOGGING_LEVEL_WARNING,
-                DebugLogger.LogLevel.Info => OrtLoggingLevel.ORT_LOGGING_LEVEL_INFO,
-                DebugLogger.LogLevel.Debug => OrtLoggingLevel.ORT_LOGGING_LEVEL_VERBOSE,
+                LogLevel.ERROR => OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+                LogLevel.WARNING => OrtLoggingLevel.ORT_LOGGING_LEVEL_WARNING,
+                LogLevel.INFO => OrtLoggingLevel.ORT_LOGGING_LEVEL_INFO,
+                LogLevel.VERBOSE => OrtLoggingLevel.ORT_LOGGING_LEVEL_VERBOSE,
                 _ => OrtLoggingLevel.ORT_LOGGING_LEVEL_WARNING
             };
             InitializeOnnxLogging();
@@ -457,7 +447,7 @@ namespace SparkTTS.Models
         /// </summary>
         private static void InitializeOnnxLogging()
         {
-            if (_loggingInitialized || Logger.Level == DebugLogger.LogLevel.None)
+            if (_loggingInitialized)
                 return;
 
             if (Application.platform == RuntimePlatform.IPhonePlayer)

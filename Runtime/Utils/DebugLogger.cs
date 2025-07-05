@@ -2,52 +2,45 @@ using UnityEngine;
 
 namespace SparkTTS.Utils
 {
-    public class DebugLogger
+    public enum LogLevel
     {
-        public enum LogLevel
-        {
-            None,
-            Error,
-            Warning,
-            Info,
-            Debug
-        }
+        VERBOSE,
+        INFO,
+        WARNING,
+        ERROR,
+    }
+    public static class Logger
+    {
 
-        public LogLevel Level { get => _logLevel; set => _logLevel = value; }
-        private LogLevel _logLevel = LogLevel.Warning;
-        
-        public DebugLogger(LogLevel logLevel = LogLevel.Warning)
-        {
-            _logLevel = logLevel;
-        }
-        
-        /// <summary>
-        /// Gets or sets whether debug logging is enabled
-        /// </summary>
-        public bool IsEnabled
-        {
-            get { return _logLevel >= LogLevel.Debug; }
-        }
+        public static LogLevel LogLevel { get; set; } = LogLevel.INFO;
 
-        public void Log(string message)
+        public static void LogVerbose(string message)
         {
-            if (_logLevel >= LogLevel.Debug)
+            if (LogLevel <= LogLevel.VERBOSE)
             {
                 Debug.Log(message);
             }
         }
 
-        public void LogWarning(string message)
+        public static void Log(string message)
         {
-            if (_logLevel >= LogLevel.Warning)
+            if (LogLevel <= LogLevel.INFO)
+            {
+                Debug.Log(message);
+            }
+        }
+
+        public static void LogWarning(string message)
+        {
+            if (LogLevel <= LogLevel.WARNING)
             {
                 Debug.LogWarning(message);
             }
         }
 
-        public void LogError(string message)
+        public static void LogError(string message)
         {
-            if (_logLevel >= LogLevel.Error)
+            if (LogLevel <= LogLevel.ERROR)
             {
                 Debug.LogError(message);
             }

@@ -83,12 +83,10 @@ namespace SparkTTS.Models
         /// Initializes a new instance of the LLMModel class.
         /// </summary>
         /// <param name="tokenizerDef">The tokenizer definition containing special tokens</param>
-        /// <param name="logLevel">The logging level for this model instance</param>
         /// <exception cref="ArgumentNullException">Thrown when tokenizerDef is null</exception>
-        public LLMModel(TokenizerDefinition tokenizerDef, DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+        public LLMModel(TokenizerDefinition tokenizerDef)
             : base(SparkTTSModelPaths.LLMModelName, 
-                   SparkTTSModelPaths.LLMFolder, 
-                   logLevel)
+                   SparkTTSModelPaths.LLMFolder)
         {
             if (tokenizerDef == null)
                 throw new ArgumentNullException(nameof(tokenizerDef), "TokenizerDefinition cannot be null for LLMModel.");

@@ -19,11 +19,9 @@ namespace SparkTTS.Models
         /// <summary>
         /// Initializes a new instance of the SpeakerEncoderModel class.
         /// </summary>
-        /// <param name="logLevel">The logging level for this model instance</param>
-        public SpeakerEncoderModel(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning) 
+        public SpeakerEncoderModel() 
             : base(SparkTTSModelPaths.SpeakerEncoderModelName, 
-                   SparkTTSModelPaths.SpeakerEncoderFolder, 
-                   logLevel)
+                   SparkTTSModelPaths.SpeakerEncoderFolder)
         {
             Logger.Log("[SpeakerEncoderModel] Initialized successfully");
         }

@@ -43,7 +43,7 @@ namespace SparkTTS.Utils
         public void LogTiming()
         {
             var totalTimeMs = (double)_totalTimeTicks / Stopwatch.Frequency * 1000;
-            UnityEngine.Debug.Log($"[SparkTTS.Timing] {_name} Total time: {totalTimeMs}ms, Total calls: {_totalCalls}, Avg time: {totalTimeMs / _totalCalls}ms");
+            Logger.Log($"[SparkTTS.Timing] {_name} Total time: {totalTimeMs}ms, Total calls: {_totalCalls}, Avg time: {totalTimeMs / _totalCalls}ms");
             Reset();
         }
     }

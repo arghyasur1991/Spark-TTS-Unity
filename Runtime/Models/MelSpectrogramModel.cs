@@ -21,16 +21,13 @@ namespace SparkTTS.Models
 
         public int OutputNumMelBands { get; private set; } = 0;
         public const int TargetNumMelBandsForSpeakerEncoder = 128;
-        public static new DebugLogger Logger = new();
 
         /// <summary>
         /// Initializes a new instance of the MelSpectrogramModel class.
         /// </summary>
-        /// <param name="logLevel">The logging level for this model instance</param>
-        public MelSpectrogramModel(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning) 
+        public MelSpectrogramModel() 
             : base(SparkTTSModelPaths.MelSpectrogramModelName, 
-                   SparkTTSModelPaths.MelSpectrogramFolder, 
-                   logLevel)
+                   SparkTTSModelPaths.MelSpectrogramFolder)
         {
             Logger.Log("[MelSpectrogramModel] Initialized successfully");
             

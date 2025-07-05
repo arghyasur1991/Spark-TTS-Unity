@@ -68,7 +68,6 @@ namespace SparkTTS.Core
 
     internal static class SparkTokenBuilder
     {
-        public static DebugLogger Logger = new();
         public static string Task(string taskKey)
         {
             if (SparkTTSConstants.TaskTokenMap.TryGetValue(taskKey.ToLowerInvariant(), out string token))
@@ -196,8 +195,6 @@ namespace SparkTTS.Core
 
     internal class TokenizerService
     {
-        public static DebugLogger Logger = new();
-
         private readonly TokenizerDefinition _config;
         private readonly Dictionary<string, int> _vocab;
         private readonly List<(string, string)> _merges; // Processed merges for easier lookup

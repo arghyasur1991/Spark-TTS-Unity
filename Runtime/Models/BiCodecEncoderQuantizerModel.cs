@@ -20,16 +20,12 @@ namespace SparkTTS.Models
         private const string FeaturesInputName = "features";         // Expects (B, T_feat, D_feat), e.g., (1, 98, 1024) float32
         private const string SemanticTokensOutputName = "semantic_tokens"; // Outputs (B, num_quantizers, T_quantized), e.g., (1, 8, 49) int64
 
-        public static new DebugLogger Logger = new();
-
         /// <summary>
         /// Initializes a new instance of the BiCodecEncoderQuantizerModel class.
         /// </summary>
-        /// <param name="logLevel">The logging level for this model instance</param>
-        public BiCodecEncoderQuantizerModel(DebugLogger.LogLevel logLevel = DebugLogger.LogLevel.Warning)
+        public BiCodecEncoderQuantizerModel()
             : base(SparkTTSModelPaths.BiCodecEncoderQuantizerModelName, 
-                   SparkTTSModelPaths.BiCodecFolder, 
-                   logLevel)
+                   SparkTTSModelPaths.BiCodecFolder)
         {
             Logger.Log("[BiCodecEncoderQuantizerModel] Initialized successfully");
         }
