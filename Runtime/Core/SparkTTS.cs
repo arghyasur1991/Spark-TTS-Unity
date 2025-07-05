@@ -453,7 +453,7 @@ namespace SparkTTS.Core
                 return new TTSInferenceResult { Success = false, ErrorMessage = "BiCodec failed to generate waveform" };
             }
 
-            return new TTSInferenceResult { Success = true, Waveform = waveform, ModelInputs = modelInputs, GlobalTokenIds = globalTokenIds };
+            return new TTSInferenceResult { Success = true, Waveform = waveform, ModelInputs = modelInputs, GlobalTokenIds = globalTokensForBiCodec.ToArray() };
         }
 
         /// <summary>

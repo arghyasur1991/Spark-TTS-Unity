@@ -85,6 +85,30 @@ namespace SparkTTS
                 return null;
             }
         }
+        public async Task<CharacterVoice> CreateFromFolderAsync(string voiceFolder)
+        {
+            await _initializeTask;
+            if (!_initialized || _disposed)
+            {
+                Logger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
+                return null;
+            }
+            
+            try
+            {
+                CharacterVoice voice = new(
+                    _sparkTts
+                );
+
+                await voice.LoadVoiceAsync(voiceFolder);
+                return voice;
+            }
+            catch (Exception e)
+            {
+                Logger.LogError($"[CharacterVoiceFactory] Exception creating voice from reference: {e.Message}\n{e.StackTrace}");
+                return null;
+            }
+        }
         public async Task<CharacterVoice> CreateFromReferenceAsync(AudioClip referenceClip)
         {
             await _initializeTask;

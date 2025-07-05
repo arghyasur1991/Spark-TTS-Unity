@@ -31,7 +31,6 @@ namespace SparkTTS
         private readonly SparkTTS _sparkTts;
         private bool _disposed = false;
         private float[] _referenceWaveform = null;
-        private Task _loadVoiceTask = null;
         
         // Constructor - Private to enforce use of factory
         internal CharacterVoice(
@@ -56,10 +55,9 @@ namespace SparkTTS
             _referenceWaveform = _sparkTts.LoadAudioClip(referenceClip, 16000);
         }
 
-        internal CharacterVoice(SparkTTS sparkTts, string voiceFolder)
+        internal CharacterVoice(SparkTTS sparkTts)
         {
             _sparkTts = sparkTts ?? throw new ArgumentNullException(nameof(sparkTts));
-            _loadVoiceTask = LoadVoiceAsync(voiceFolder);
         }
 
         internal async Task LoadVoiceAsync(string voiceFolder)
@@ -212,10 +210,6 @@ namespace SparkTTS
                 Logger.Log($"[CharacterVoice.GenerateSpeech] Generating speech for text: {text}");
                 
                 TTSInferenceResult result;
-                if (_loadVoiceTask != null)
-                {
-                    await _loadVoiceTask;
-                }
                 
                 // Check if we have cached tokens for optimization
                 if (_cachedModelInputs != null && _cachedGlobalTokenIds != null)
