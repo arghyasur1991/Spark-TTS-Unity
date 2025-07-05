@@ -117,10 +117,7 @@ namespace SparkTTS.Models
         private async Task InitializeModelMetadataAsync()
         {
             try
-            {
-                // Wait for model to be loaded
-                await _loadTask;
-                
+            {                
                 // Get preallocated outputs to inspect metadata
                 var outputs = await GetPreallocatedOutputs();
                 
@@ -233,10 +230,6 @@ namespace SparkTTS.Models
             int topK = 50,
             float topP = 0.95f)
         {
-            if (!IsInitialized) 
-            { 
-                throw new InvalidOperationException("[LLMModel] Model not initialized"); 
-            }
             if (llmInitialInput == null || !llmInitialInput.InputIds.Any()) 
             { 
                 throw new ArgumentNullException(nameof(llmInitialInput), "Initial input is null or empty"); 

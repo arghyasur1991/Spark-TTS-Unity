@@ -157,6 +157,7 @@ namespace SparkTTS
                 {
                     using (var writer = new BinaryWriter(stream))
                     {
+                        writer.Write(_cachedGlobalTokenIds.Length);
                         foreach (var token in _cachedGlobalTokenIds)
                         {
                             writer.Write(token);
@@ -210,9 +211,9 @@ namespace SparkTTS
                 Logger.Log($"[CharacterVoice.GenerateSpeech] Generating speech for text: {text}");
                 
                 TTSInferenceResult result;
-                
+                bool useOptimizedGeneration = false; //TODO: fix this
                 // Check if we have cached tokens for optimization
-                if (_cachedModelInputs != null && _cachedGlobalTokenIds != null)
+                if (useOptimizedGeneration && _cachedModelInputs != null && _cachedGlobalTokenIds != null)
                 {
                     // Use the more efficient update method if we already have tokenized inputs
                     TokenizationOutput updatedInputs = _sparkTts.UpdateTextInTokenizedInputs(

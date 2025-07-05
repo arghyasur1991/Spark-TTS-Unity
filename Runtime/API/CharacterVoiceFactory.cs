@@ -19,22 +19,15 @@ namespace SparkTTS
         private SparkTTS _sparkTts;
         private bool _disposed = false;
         private bool _initialized = false;
-        private Task _initializeTask;
         
         /// <summary>
         /// Initializes a new instance of the CharacterVoiceFactory.
         /// </summary>
         internal CharacterVoiceFactory()
         {
-            _initializeTask = Task.Run(() => {
-                var initConfig = new TTSInferenceConfig();
-                _sparkTts = new SparkTTS(initConfig);
-                _initialized = _sparkTts.IsInitialized;                
-                if (!_initialized)
-                {
-                    Logger.LogError("[CharacterVoiceFactory] Failed to initialize TTSInferenceOrchestrator.");
-                }
-            });
+            var initConfig = new TTSInferenceConfig();
+            _sparkTts = new SparkTTS(initConfig);
+            _initialized = _sparkTts.IsInitialized;
         }
 
         public static void Initialize(LogLevel logLevel = LogLevel.INFO)
@@ -53,7 +46,6 @@ namespace SparkTTS
         /// <returns>A CharacterVoice instance or null if creation fails</returns>
         public async Task<CharacterVoice> CreateFromStyleAsync(string gender, string pitch, string speed, string referenceText = "I am a character voice")
         {
-            await _initializeTask;
             if (!_initialized || _disposed)
             {
                 Logger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
@@ -87,7 +79,6 @@ namespace SparkTTS
         }
         public async Task<CharacterVoice> CreateFromFolderAsync(string voiceFolder)
         {
-            await _initializeTask;
             if (!_initialized || _disposed)
             {
                 Logger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
@@ -109,9 +100,8 @@ namespace SparkTTS
                 return null;
             }
         }
-        public async Task<CharacterVoice> CreateFromReferenceAsync(AudioClip referenceClip)
+        public CharacterVoice CreateFromReference(AudioClip referenceClip)
         {
-            await _initializeTask;
             if (!_initialized || _disposed)
             {
                 Logger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
