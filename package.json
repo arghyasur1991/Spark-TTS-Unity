@@ -1,0 +1,29 @@
+{
+  "name": "com.genesis.sparktts.unity",
+  "version": "0.1.0",
+  "displayName": "Spark TTS Unity",
+  "description": "Unity package for using Spark-TTS on-device models",
+  "unity": "6000.0",
+  "unityRelease": "46f1",
+  "dependencies": {
+    "com.github.asus4.onnxruntime": "0.4.0",
+    "com.unity.nuget.newtonsoft-json": "3.2.1"
+  },
+  "keywords": [
+    "tts",
+    "speech",
+    "audio",
+    "spark",
+    "voice"
+  ],
+  "author": {
+    "name": "Genesis"
+  },
+  "samples": [
+    {
+      "displayName": "Character Voice Demo",
+      "description": "Demo of using Spark TTS in Unity",
+      "path": "Samples/CharacterVoiceDemo"
+    }
+  ]
+}

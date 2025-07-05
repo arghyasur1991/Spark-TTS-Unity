@@ -1,0 +1,17 @@
+{
+    "name": "SparkTTS.Runtime",
+    "rootNamespace": "SparkTTS",
+    "references": [
+        "com.github.asus4.onnxruntime",
+        "com.unity.nuget.newtonsoft-json"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": true,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
