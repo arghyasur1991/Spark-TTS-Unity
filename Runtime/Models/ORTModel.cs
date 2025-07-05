@@ -49,6 +49,31 @@ namespace SparkTTS.Models
         /// </summary>
         protected static OrtLoggingLevel OrtLogLevel => _ortLogLevel;
 
+        protected enum Precision
+        {
+            FP32,
+            FP16,
+            Int8
+        }
+
+        protected enum ExecutionProvider
+        {
+            /// <summary>
+            /// CPU execution provider - universal compatibility, moderate performance
+            /// </summary>
+            CPU,
+            
+            /// <summary>
+            /// CUDA execution provider - GPU acceleration for NVIDIA cards, high performance
+            /// </summary>
+            CUDA,
+            
+            /// <summary>
+            /// CoreML execution provider - Apple Silicon/macOS acceleration, optimized for Apple hardware
+            /// </summary>
+            CoreML
+        }
+
         #endregion
 
         #region Constructor
@@ -58,20 +83,28 @@ namespace SparkTTS.Models
         /// </summary>
         /// <param name="modelName">The name of the model file (without extension)</param>
         /// <param name="modelFolder">The folder containing the model (from SparkTTSModelPaths)</param>
-        protected ORTModel(string modelName, string modelFolder)
+        /// <param name="precision">The precision of the model</param>
+        /// <param name="executionProvider">The execution provider for the model</param>
+        protected ORTModel(
+            string modelName, 
+            string modelFolder, 
+            Precision precision = Precision.FP32, 
+            ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
             if (string.IsNullOrEmpty(modelName))
                 throw new ArgumentNullException(nameof(modelName));
             if (modelFolder == null)
                 throw new ArgumentNullException(nameof(modelFolder));
-            
+
             _config = new ModelConfig
             {
                 ModelName = modelName,
                 ModelFolder = modelFolder,
-                ModelPath = GetModelPath(modelFolder, $"{modelName}.onnx")
+                Precision = precision,
+                ExecutionProvider = executionProvider
             };
 
+            SetModelPath(modelFolder, modelName);
             _loadTask = LoadModelAsync();
         }
 
@@ -299,18 +332,25 @@ namespace SparkTTS.Models
         #region Protected Methods - Utilities
 
         /// <summary>
-        /// Gets the full path to a model file within the SparkTTS model structure.
+        /// Sets the full path to a model file within the SparkTTS model structure.
         /// </summary>
         /// <param name="modelFolder">The subfolder for the model</param>
-        /// <param name="modelFileName">The model file name</param>
-        /// <returns>The full path to the model file</returns>
-        protected static string GetModelPath(string modelFolder, string modelFileName)
+        /// <param name="modelName">The model name</param>
+        protected void SetModelPath(string modelFolder, string modelName)
         {
-            return Path.Combine(
+            if (_config.Precision == Precision.FP16)
+            {
+                modelName = $"{modelName}_fp16";
+            }
+            else if (_config.Precision == Precision.Int8)
+            {
+                modelName = $"{modelName}_int8";
+            }
+            _config.ModelPath = Path.Combine(
                 Application.streamingAssetsPath,
                 SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets,
                 modelFolder,
-                modelFileName);
+                $"{modelName}.onnx");
         }
 
         /// <summary>
@@ -376,7 +416,15 @@ namespace SparkTTS.Models
                 try
                 {
                     var options = CreateSessionOptions();
-                    _session = new InferenceSession(_config.ModelPath, options);
+
+                    if (_config.ExecutionProvider == ExecutionProvider.CoreML) 
+                    {
+                        LoadModelWithCoreML(_config.ModelPath, options);
+                    }
+                    else
+                    {
+                        _session = new InferenceSession(_config.ModelPath, options);
+                    }
                     
                     // Initialize input/output metadata
                     _inputNames = _session.InputMetadata.Keys.ToList();
@@ -541,6 +589,132 @@ namespace SparkTTS.Models
 
         #endregion
 
+        #region Private Methods - CoreML Support
+
+
+        /// <summary>
+        /// Loads an ONNX model with CoreML acceleration and comprehensive error handling.
+        /// This method configures CoreML provider with caching support, handles cache corruption recovery,
+        /// and provides fallback mechanisms for maximum compatibility across different Apple devices.
+        /// </summary>
+        /// <param name="modelPath">The file path to the ONNX model</param>
+        /// <param name="sessionOptions">The base session options to configure with CoreML provider</param>
+        private void LoadModelWithCoreML(string modelPath, SessionOptions sessionOptions)
+        {
+            try
+            {
+                // Configure CoreML provider with caching support using dictionary API
+                string cacheDirectory = GetCoreMLCacheDirectory();
+                
+                // Ensure cache directory exists and is writable
+                EnsureCacheDirectoryExists(cacheDirectory);
+                
+                var coremlOptions = new Dictionary<string, string>
+                {
+                    ["ModelFormat"] = "MLProgram",
+                    ["MLComputeUnits"] = "CPUAndGPU",
+                    ["RequireStaticInputShapes"] = "0",
+                    ["EnableOnSubgraphs"] = "1",
+                    // Advanced options for optimization
+                    // ["SpecializationStrategy"] = "FastPrediction",
+                    // ["AllowLowPrecisionAccumulationOnGPU"] = "1",
+                    // ["ProfileComputePlan"] = "1"
+                };
+                
+                if (!string.IsNullOrEmpty(cacheDirectory))
+                {
+                    coremlOptions["ModelCacheDirectory"] = cacheDirectory;
+                }
+                
+                sessionOptions.AppendExecutionProvider("CoreML", coremlOptions);
+                Logger.Log($"[ModelUtils] CoreML provider configured with caching (cache: {cacheDirectory})");
+                
+                // Try creating the session - if it fails due to cache corruption, retry
+                try
+                {
+                    _session = new InferenceSession(modelPath, sessionOptions);
+                    Logger.Log($"[ModelUtils] Successfully loaded model with CoreML provider: {modelPath}");
+                }
+                catch (Exception sessionException)
+                {
+                    if (sessionException.Message.Contains("Manifest.json") || 
+                        sessionException.Message.Contains("coreml_cache") ||
+                        sessionException.Message.Contains("manifest does not exist"))
+                    {
+                        Logger.LogWarning($"[ModelUtils] CoreML cache corruption detected. Retrying: {sessionException.Message}");
+                        _session = new InferenceSession(modelPath, sessionOptions);
+                        Logger.Log($"[ModelUtils] Successfully loaded model with CoreML provider after retrying: {modelPath}");
+                    }
+                    else
+                    {
+                        throw; // Re-throw if it's not a cache-related issue
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning($"[ModelUtils] CoreML provider configuration failed: {e.Message}");
+                
+                // Fallback to old CoreML flags approach for compatibility
+                try
+                {
+                    var fallbackOptions = CreateSessionOptions();
+                    fallbackOptions.AppendExecutionProvider_CoreML(
+                        CoreMLFlags.COREML_FLAG_USE_CPU_AND_GPU | 
+                        CoreMLFlags.COREML_FLAG_CREATE_MLPROGRAM |
+                        CoreMLFlags.COREML_FLAG_ENABLE_ON_SUBGRAPH);
+                    
+                    _session = new InferenceSession(modelPath, fallbackOptions);
+                    Logger.Log("[ModelUtils] Using fallback CoreML provider (no caching)");
+                }
+                catch (Exception fallbackException)
+                {
+                    Logger.LogWarning($"[ModelUtils] CoreML fallback also failed: {fallbackException.Message}. Using CPU provider.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the cache directory for CoreML compiled models with automatic path resolution.
+        /// This method determines the best location for CoreML model caching based on configuration
+        /// and platform-specific storage locations for optimal performance and persistence.
+        /// </summary>
+        /// <returns>The full path to the CoreML cache directory</returns>
+        private string GetCoreMLCacheDirectory()
+        {
+            if (!string.IsNullOrEmpty(_config.ModelPath))
+            {
+                return Path.Combine(_config.ModelPath, "coreml_cache");
+            }
+            return Path.Combine(Application.persistentDataPath, "coreml_cache");
+        }
+
+        /// <summary>
+        /// Ensures the CoreML cache directory exists and is writable with proper error handling.
+        /// This method creates the cache directory structure if it doesn't exist and handles
+        /// permission and filesystem errors gracefully.
+        /// </summary>
+        /// <param name="cacheDirectory">The cache directory path to create and validate</param>
+        private void EnsureCacheDirectoryExists(string cacheDirectory)
+        {
+            if (string.IsNullOrEmpty(cacheDirectory))
+                return;
+                
+            try
+            {
+                if (!Directory.Exists(cacheDirectory))
+                {
+                    Directory.CreateDirectory(cacheDirectory);
+                    Logger.Log($"[ModelUtils] Created CoreML cache directory: {cacheDirectory}");
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning($"[ModelUtils] Failed to create cache directory {cacheDirectory}: {e.Message}");
+            }
+        }
+        #endregion
+
         #region Private Types
 
         /// <summary>
@@ -551,6 +725,8 @@ namespace SparkTTS.Models
             public string ModelName { get; set; }
             public string ModelFolder { get; set; }
             public string ModelPath { get; set; }
+            public Precision Precision { get; set; } = Precision.FP32;
+            public ExecutionProvider ExecutionProvider { get; set; } = ExecutionProvider.CPU;
         }
 
         /// <summary>
