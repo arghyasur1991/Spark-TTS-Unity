@@ -85,6 +85,33 @@ namespace SparkTTS.Editor
 
         #endregion
 
+        #region Public API
+
+        /// <summary>
+        /// Gets all SparkTTS model configurations
+        /// </summary>
+        /// <returns>Dictionary of model configurations by category</returns>
+        public static Dictionary<string, List<ModelConfig>> GetAllModelConfigurations()
+        {
+            return new Dictionary<string, List<ModelConfig>>(ModelConfigurations);
+        }
+
+        /// <summary>
+        /// Gets model configurations for a specific category
+        /// </summary>
+        /// <param name="category">The category name (e.g., "SparkTTS", "SparkTTS_LLM")</param>
+        /// <returns>List of model configurations for the category</returns>
+        public static List<ModelConfig> GetModelConfigurations(string category)
+        {
+            if (ModelConfigurations.ContainsKey(category))
+            {
+                return new List<ModelConfig>(ModelConfigurations[category]);
+            }
+            return new List<ModelConfig>();
+        }
+
+        #endregion
+
         #region Unity Editor Window
 
         [MenuItem("SparkTTS/Model Deployment Tool")]
