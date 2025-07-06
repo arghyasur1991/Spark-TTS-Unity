@@ -117,9 +117,9 @@ namespace SparkTTS.Models
         private async Task InitializeModelMetadataAsync()
         {
             try
-            {                
+            {
                 // Get preallocated outputs to inspect metadata
-                var outputs = await GetPreallocatedOutputs();
+                var outputs = await GetOutputNames();
                 
                 // Dynamically detect input/output names by pattern matching
                 _inputIDsName = "input_ids";
@@ -130,7 +130,7 @@ namespace SparkTTS.Models
                 // Detect KV cache structure from outputs
                 foreach (var output in outputs)
                 {
-                    var name = output.Name;
+                    var name = output;
                     
                     // Detect logits output
                     if (name.Contains("logits"))
@@ -139,9 +139,9 @@ namespace SparkTTS.Models
                     }
                     
                     // Detect present key/value outputs for KV cache
-                    var kvMatch = System.Text.RegularExpressions.Regex.Match(name, @"present\.(\d+)\.(key|value)");
+                    var kvMatch = Regex.Match(name, @"present\.(\d+)\.(key|value)");
                     if (!kvMatch.Success) 
-                        kvMatch = System.Text.RegularExpressions.Regex.Match(name, @"present_key_values\.(\d+)\.(key|value)");
+                        kvMatch = Regex.Match(name, @"present_key_values\.(\d+)\.(key|value)");
                     
                     if (kvMatch.Success)
                     {
@@ -157,12 +157,13 @@ namespace SparkTTS.Models
                             _numLLMLayers = layerIndex + 1;
                         
                         // Extract dimension info from tensor metadata if available
-                        if (output.Value is DenseTensor<float> tensor && tensor.Dimensions.Length == 4)
+                        var outputDimensions = await GetOutputDimensions(output);
+                        if (outputDimensions != null && outputDimensions.Length == 4)
                         {
-                            if (_numAttentionHeads == 0 && tensor.Dimensions[1] > 0) 
-                                _numAttentionHeads = (int)tensor.Dimensions[1];
-                            if (_headDimension == 0 && tensor.Dimensions[3] > 0) 
-                                _headDimension = (int)tensor.Dimensions[3];
+                            if (_numAttentionHeads == 0 && outputDimensions[1] > 0) 
+                                _numAttentionHeads = (int)outputDimensions[1];
+                            if (_headDimension == 0 && outputDimensions[3] > 0) 
+                                _headDimension = (int)outputDimensions[3];
                         }
                     }
                 }

@@ -21,7 +21,8 @@ namespace SparkTTS.Models
         /// </summary>
         public VocoderModel()
             : base(SparkTTSModelPaths.VocoderModelName, 
-                   SparkTTSModelPaths.VocoderFolder)
+                   SparkTTSModelPaths.VocoderFolder,
+                   preAllocateOutputs: true)
         {
             Logger.LogVerbose("[VocoderModel] Initialized successfully");
         }

@@ -27,7 +27,8 @@ namespace SparkTTS.Models
         /// </summary>
         public MelSpectrogramModel() 
             : base(SparkTTSModelPaths.MelSpectrogramModelName, 
-                   SparkTTSModelPaths.MelSpectrogramFolder)
+                   SparkTTSModelPaths.MelSpectrogramFolder,
+                   preAllocateOutputs: true)
         {
             Logger.LogVerbose("[MelSpectrogramModel] Initialized successfully");
             

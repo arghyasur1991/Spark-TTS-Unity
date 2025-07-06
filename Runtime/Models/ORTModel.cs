@@ -26,6 +26,7 @@ namespace SparkTTS.Models
         private InferenceSession _session;
         private List<string> _inputNames = new();
         private List<NamedOnnxValue> _inputs;
+        private readonly bool _preAllocateOutputs = false;
         private List<NamedOnnxValue> _preallocatedOutputs;
         protected readonly Task<InferenceSession> _loadTask;
         private bool _disposed = false;
@@ -88,6 +89,7 @@ namespace SparkTTS.Models
         protected ORTModel(
             string modelName, 
             string modelFolder, 
+            bool preAllocateOutputs = false,
             Precision precision = Precision.FP32, 
             ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
@@ -106,6 +108,7 @@ namespace SparkTTS.Models
                     SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets,
                     modelFolder)
             };
+            _preAllocateOutputs = preAllocateOutputs;
             _loadTask = LoadModelAsync();
         }
 
@@ -169,7 +172,12 @@ namespace SparkTTS.Models
         {
             if (inputTensors == null)
                 throw new ArgumentNullException(nameof(inputTensors));
-                
+            
+            if (!_preAllocateOutputs)
+            {
+                throw new InvalidOperationException("Pre-allocated outputs are not supported for this model. Use RunDisposable() instead.");
+            }
+            
             await _loadTask;
             await LoadInputs(inputTensors);
             return await Run();
@@ -305,6 +313,23 @@ namespace SparkTTS.Models
             return _preallocatedOutputs;
         }
 
+        protected async Task<IReadOnlyList<string>> GetOutputNames()
+        {
+            await _loadTask;
+            return _session.OutputNames;
+        }
+
+        protected async Task<int[]> GetOutputDimensions(string outputName)
+        {
+            await _loadTask;
+            var outputMetadata = _session.OutputMetadata[outputName];
+            if (outputMetadata.IsTensor)
+            {
+                return outputMetadata.Dimensions;
+            }
+            return null;
+        }
+
         #endregion
 
         #region Static Methods - Environment Management
@@ -429,26 +454,28 @@ namespace SparkTTS.Models
                     _inputs = new List<NamedOnnxValue>(_inputNames.Count);
                     
                     // Pre-allocate output buffers
-                    _preallocatedOutputs = new List<NamedOnnxValue>();
-                    foreach (var outputMetadata in _session.OutputMetadata)
+                    if (_preAllocateOutputs)
                     {
-                        var outputName = outputMetadata.Key;
-                        var nodeMetadata = outputMetadata.Value;
-                        
-                        if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(float))
+                        _preallocatedOutputs = new List<NamedOnnxValue>();
+                        foreach (var outputMetadata in _session.OutputMetadata)
                         {
-                            CreatePreallocatedTensor<float>(outputName, nodeMetadata.Dimensions);
-                        }
-                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
-                        {
-                            CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
-                        }
-                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
-                        {
-                            CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
+                            var outputName = outputMetadata.Key;
+                            var nodeMetadata = outputMetadata.Value;
+                            
+                            if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(float))
+                            {
+                                CreatePreallocatedTensor<float>(outputName, nodeMetadata.Dimensions);
+                            }
+                            else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
+                            {
+                                CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
+                            }
+                            else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
+                            {
+                                CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
+                            }
                         }
                     }
-                    
                     IsInitialized = true;
                     Logger.Log($"[{_config.ModelName}] Successfully loaded model: {modelPath}");
                     return _session;
