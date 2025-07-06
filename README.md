@@ -191,6 +191,54 @@ public class VoiceCloningExample : MonoBehaviour
 }
 ```
 
+## Model Deployment Tool
+
+SparkTTS includes a built-in Editor tool that automatically copies the required models from `Assets/Models` to `StreamingAssets` with the correct precision settings.
+
+**Access the tool**: `Window > SparkTTS > Model Deployment Tool`
+
+### Key Features
+
+* **Smart Model Selection**: Determines which SparkTTS models are required based on codebase analysis
+* **Precision-Aware**: Uses optimal precision variants (FP16/FP32) for each model
+* **Large Model Support**: Handles `model.onnx_data` files automatically
+* **Size Optimization**: Only copies necessary models to reduce build size
+* **Backup Support**: Creates backups of existing models before overwriting
+* **Dry Run Mode**: Preview changes without actually copying files
+
+### How to Use
+
+1. **Open the tool**: Go to `Window > SparkTTS > Model Deployment Tool`
+2. **Configure paths**: 
+   - Source: `Assets/Models` (automatically detected)
+   - Destination: `Assets/StreamingAssets/SparkTTS` (automatically configured)
+3. **Select components**: 
+   - ✅ **SparkTTS Models** (core voice generation models)
+   - ✅ **LLM Models** (large language models for text processing)
+4. **Review selection**: The tool shows exactly which models will be copied and their file sizes
+5. **Deploy**: Click "Deploy SparkTTS Models" to copy the optimized model set
+
+### Model Precision Settings
+
+| Model | Precision | Notes |
+|---|---|---|
+| wav2vec2_model | FP16 | Optimized for audio processing |
+| bicodec_encoder_quantizer | FP32 | Full precision for quality |
+| bicodec_vocoder | FP32 | Full precision for quality |
+| mel_spectrogram | FP32 | Audio feature extraction |
+| speaker_encoder_tokenizer | FP32 | Speaker encoding |
+| LLM model | FP32 | Large language model (includes 1.9GB data file) |
+
+### Advanced Options
+
+* **Overwrite Existing**: Replace existing models in StreamingAssets
+* **Create Backup**: Keep .backup copies of replaced files
+* **Dry Run**: Preview operations without copying files
+
+### Integration with LiveTalk
+
+This tool can be used standalone or integrated with LiveTalk's deployment tool. When using LiveTalk, the SparkTTS models are automatically deployed through this tool's API.
+
 ## Model Setup
 
 This package requires Spark-TTS models in the following location:
@@ -230,7 +278,10 @@ As an alternative to running the export script, you can download pre-exported ON
 
 1. Download the ZIP file from the link
 2. Extract the contents
-3. Copy the extracted `SparkTTS` folder with models to your Unity project's `Assets/StreamingAssets/` directory
+3. Copy the extracted `SparkTTS` folder with models to your Unity project's `Assets/Models/` directory
+4. **Use the Model Deployment Tool** (recommended): Go to `Window > SparkTTS > Model Deployment Tool` to automatically copy only the required models with optimal precision settings
+
+**Or manually copy**: Copy the `SparkTTS` folder directly to `Assets/StreamingAssets/` (includes all model variants)
 
 ## Sample Demo
 
