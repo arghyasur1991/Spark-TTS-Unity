@@ -110,6 +110,64 @@ namespace SparkTTS.Editor
             return new List<ModelConfig>();
         }
 
+        /// <summary>
+        /// Updates model information including full path and file size
+        /// </summary>
+        /// <param name="model">The model configuration to update</param>
+        /// <param name="sourceModelsPath">The base path where models are located</param>
+        /// <returns>The updated model configuration</returns>
+        public static ModelConfig UpdateModelInfo(ModelConfig model, string sourceModelsPath)
+        {
+            // Build the full path based on precision
+            string fileName = model.modelName;
+            string extension = ".onnx";
+            
+            // Handle special cases
+            if (model.modelName.Contains(".json") || model.modelName.Contains(".txt"))
+            {
+                fileName = model.modelName;
+                extension = "";
+            }
+            else if (model.precision == "fp16")
+            {
+                fileName += "_fp16";
+            }
+            else if (model.precision == "int8")
+            {
+                fileName += "_int8";
+            }
+            
+            // Handle special case for LLM model with data file
+            if (model.modelName == "model" && model.relativePath.Contains("LLM"))
+            {
+                string dataFileName = fileName + ".onnx_data";
+                string dataPath = Path.Combine(sourceModelsPath, model.relativePath, dataFileName);
+                if (File.Exists(dataPath))
+                {
+                    model.fullPath = Path.Combine(sourceModelsPath, model.relativePath, fileName + extension);
+                    if (File.Exists(model.fullPath))
+                    {
+                        model.fileSize = new FileInfo(model.fullPath).Length + new FileInfo(dataPath).Length;
+                    }
+                    return model;
+                }
+            }
+            
+            model.fullPath = Path.Combine(sourceModelsPath, model.relativePath, fileName + extension);
+            
+            if (File.Exists(model.fullPath))
+            {
+                model.fileSize = new FileInfo(model.fullPath).Length;
+            }
+            else
+            {
+                model.fileSize = 0;
+                Debug.LogWarning($"SparkTTS model file not found: {model.fullPath}");
+            }
+            
+            return model;
+        }
+
         #endregion
 
         #region Unity Editor Window
@@ -310,54 +368,8 @@ namespace SparkTTS.Editor
 
         private void UpdateModelInfo(ModelConfig model)
         {
-            // Build the full path based on precision
-            string fileName = model.modelName;
-            string extension = ".onnx";
-            
-            // Handle special cases
-            if (model.modelName.Contains(".json") || model.modelName.Contains(".txt"))
-            {
-                fileName = model.modelName;
-                extension = "";
-            }
-            else if (model.precision == "fp16")
-            {
-                fileName += "_fp16";
-            }
-            else if (model.precision == "int8")
-            {
-                fileName += "_int8";
-            }
-            
-            // Handle special case for LLM model with data file
-            if (model.modelName == "model" && model.relativePath.Contains("LLM"))
-            {
-                string dataFileName = fileName + ".onnx_data";
-                string dataPath = Path.Combine(sourceModelsPath, model.relativePath, dataFileName);
-                if (File.Exists(dataPath))
-                {
-                    model.fullPath = Path.Combine(sourceModelsPath, model.relativePath, fileName + extension);
-                    if (File.Exists(model.fullPath))
-                    {
-                        model.fileSize = new FileInfo(model.fullPath).Length + new FileInfo(dataPath).Length;
-                        totalSelectedSize += model.fileSize;
-                    }
-                    return;
-                }
-            }
-            
-            model.fullPath = Path.Combine(sourceModelsPath, model.relativePath, fileName + extension);
-            
-            if (File.Exists(model.fullPath))
-            {
-                model.fileSize = new FileInfo(model.fullPath).Length;
-                totalSelectedSize += model.fileSize;
-            }
-            else
-            {
-                model.fileSize = 0;
-                Debug.LogWarning($"SparkTTS model file not found: {model.fullPath}");
-            }
+            model = UpdateModelInfo(model, sourceModelsPath);
+            totalSelectedSize += model.fileSize;
         }
 
         private int CountAvailableModels()
