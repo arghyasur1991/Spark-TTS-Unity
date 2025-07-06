@@ -199,7 +199,6 @@ SparkTTS includes a built-in Editor tool that automatically copies the required 
 
 ### Key Features
 
-* **Smart Model Selection**: Determines which SparkTTS models are required based on codebase analysis
 * **Precision-Aware**: Uses optimal precision variants (FP16/FP32) for each model
 * **Large Model Support**: Handles `model.onnx_data` files automatically
 * **Size Optimization**: Only copies necessary models to reduce build size
@@ -235,7 +234,7 @@ SparkTTS includes a built-in Editor tool that automatically copies the required 
 * **Create Backup**: Keep .backup copies of replaced files
 * **Dry Run**: Preview operations without copying files
 
-### Integration with LiveTalk
+### Integration with [LiveTalk-Unity](https://github.com/arghyasur1991/LiveTalk-Unity)
 
 This tool can be used standalone or integrated with LiveTalk's deployment tool. When using LiveTalk, the SparkTTS models are automatically deployed through this tool's API.
 
@@ -263,14 +262,15 @@ Assets/StreamingAssets/SparkTTS/
       └── merges.txt
 ```
 
-You can obtain these models by using the `export_all_sparktts_onnx.py` script from the [Spark-TTS repository](https://github.com/arghyasur1991/Spark-TTS). This script converts the original PyTorch models to ONNX format for use in Unity.
+You can obtain these models by using the `export_sparktts_onnx.py` script from the [Spark-TTS repository](https://github.com/arghyasur1991/Spark-TTS). This script converts the original PyTorch models to ONNX format for use in Unity.
 
 ### Exporting Models
 
 1. Clone the Spark-TTS repository: `git clone https://github.com/arghyasur1991/Spark-TTS.git`
 2. Install the required dependencies
-3. Run the export script: `python export_all_sparktts_onnx.py`
-4. Copy the `SparkTTS` folder with exported ONNX models inside `onnx_models_exported` to your Unity project's StreamingAssets folder
+3. Run the export script: `python export_sparktts_onnx.py`
+4. Copy the `SparkTTS` folder with exported ONNX models inside `onnx_models` to your Unity project's `Assets/Models` directory
+5. **Use the Model Deployment Tool** (recommended): Go to `Window > SparkTTS > Model Deployment Tool` to automatically copy only the required models with optimal precision settings
 
 ### Pre-Exported ONNX Models
 
