@@ -74,11 +74,11 @@ namespace SparkTTS.Core
         private LLMModel _llmModel;
         private SparkTTSAudioTokenizer _audioTokenizer;
         private SparkTTSBiCodec _biCodec; 
-        private readonly MelSpectrogramModel _melModel;
-        private readonly SpeakerEncoderModel _speakerEncoderModel;
-        private readonly Wav2Vec2Model _wav2Vec2Model;
-        private readonly BiCodecEncoderQuantizerModel _encoderQuantizerModel;
-        private readonly VocoderModel _vocoderModel;
+        private MelSpectrogramModel _melModel;
+        private SpeakerEncoderModel _speakerEncoderModel;
+        private Wav2Vec2Model _wav2Vec2Model;
+        private BiCodecEncoderQuantizerModel _encoderQuantizerModel;
+        private VocoderModel _vocoderModel;
 
         private TokenizerService _textTokenizerService;
         private AudioLoaderService _audioLoaderService; // For processing AudioClip
@@ -333,8 +333,9 @@ namespace SparkTTS.Core
             startTime = Stopwatch.GetTimestamp();
 
             // Step 1: Tokenize inputs if not provided
-            if (modelInputs == null)
+            if (modelInputs == null || isControlMode)
             {
+                StartLoadingGeneratorModels();
                 if (text == null)
                 {
                     Logger.LogError("[SparkTTS.Inference] Either text or modelInputs must be provided");
@@ -345,6 +346,10 @@ namespace SparkTTS.Core
                     text, promptSpeechSamples, promptText, gender, pitch, speed);
                 var endTokenizationTime = Stopwatch.GetTimestamp();
                 _tokenizationTimer.AddTiming(startTime, endTokenizationTime);
+            }
+            else
+            {
+                StartLoadingVoiceCloningModels();
             }
 
             if (modelInputs == null)
@@ -452,8 +457,16 @@ namespace SparkTTS.Core
                 Logger.LogError("[SparkTTS.Inference] BiCodec failed to generate waveform");
                 return new TTSInferenceResult { Success = false, ErrorMessage = "BiCodec failed to generate waveform" };
             }
-
             return new TTSInferenceResult { Success = true, Waveform = waveform, ModelInputs = modelInputs, GlobalTokenIds = globalTokensForBiCodec.ToArray() };
+        }
+        public void DisposeModels()
+        {
+            _llmModel?.Dispose();
+            _melModel?.Dispose();
+            _speakerEncoderModel?.Dispose();
+            _wav2Vec2Model?.Dispose();
+            _encoderQuantizerModel?.Dispose();
+            _vocoderModel?.Dispose();
         }
 
         /// <summary>
@@ -565,6 +578,22 @@ namespace SparkTTS.Core
             return result;
         }
 
+        private void StartLoadingGeneratorModels()
+        {
+            _llmModel.StartLoadingAsync();
+            _melModel.StartLoadingAsync();
+            _speakerEncoderModel.StartLoadingAsync();
+            _wav2Vec2Model.StartLoadingAsync();
+            _encoderQuantizerModel.StartLoadingAsync();
+            _vocoderModel.StartLoadingAsync();
+        }
+
+        private void StartLoadingVoiceCloningModels()
+        {
+            _llmModel.StartLoadingAsync();
+            _vocoderModel.StartLoadingAsync();
+        }
+
         public void Dispose()
         {
             Dispose(true);
@@ -578,18 +607,17 @@ namespace SparkTTS.Core
             {
                 _biCodec?.Dispose();
                 _audioTokenizer?.Dispose();
-                _llmModel?.Dispose();
+                DisposeModels();
 
                 _llmModel = null;
+                _vocoderModel = null;
+                _speakerEncoderModel = null;
+                _melModel = null;
+                _wav2Vec2Model = null;
+                _encoderQuantizerModel = null;
+
                 _audioTokenizer = null;
                 _biCodec = null;
-
-                _vocoderModel?.Dispose();
-                _speakerEncoderModel?.Dispose();
-                _melModel?.Dispose();
-                _wav2Vec2Model?.Dispose();
-                _encoderQuantizerModel?.Dispose();
-                
                 _textTokenizerService = null;
                 _audioLoaderService = null; // Ditto
                 _textTokenizerService = null;

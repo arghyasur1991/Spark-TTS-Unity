@@ -105,9 +105,6 @@ namespace SparkTTS.Models
             };
 
             Logger.LogVerbose("[LLMModel] Initialized successfully");
-            
-            // Initialize model metadata asynchronously
-            _ = InitializeModelMetadataAsync();
         }
 
         /// <summary>
@@ -118,6 +115,7 @@ namespace SparkTTS.Models
         {
             try
             {
+                await _loadTask;
                 // Get preallocated outputs to inspect metadata
                 var outputs = await GetOutputNames();
                 
@@ -231,7 +229,7 @@ namespace SparkTTS.Models
             int topK = 50,
             float topP = 0.95f)
         {
-            await _loadTask;
+            await InitializeModelMetadataAsync();
             if (llmInitialInput == null || !llmInitialInput.InputIds.Any()) 
             { 
                 throw new ArgumentNullException(nameof(llmInitialInput), "Initial input is null or empty"); 

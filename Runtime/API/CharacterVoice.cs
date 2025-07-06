@@ -121,6 +121,7 @@ namespace SparkTTS
 
             _cachedGlobalTokenIds = globalTokenIds;
             _cachedModelInputs = modelInputs;
+            _sparkTts.DisposeModels();
         }
 
         public async Task SaveVoiceAsync(string voiceFolder)
@@ -267,6 +268,7 @@ namespace SparkTTS
                     Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Cached model inputs for future optimizations");
                 }
                 
+                _sparkTts.DisposeModels();
                 return clip;
             }
             catch (Exception e)

@@ -31,9 +31,6 @@ namespace SparkTTS.Models
                    preAllocateOutputs: true)
         {
             Logger.LogVerbose("[MelSpectrogramModel] Initialized successfully");
-            
-            // Initialize the output mel bands determination asynchronously
-            _ = InitializeOutputMelBandsAsync();
         }
 
         /// <summary>
@@ -43,6 +40,7 @@ namespace SparkTTS.Models
         {
             try
             {
+                await _loadTask;
                 var outputs = await GetPreallocatedOutputs();
                 var firstOutput = outputs.FirstOrDefault();
                 if (firstOutput?.Value is DenseTensor<float> tensor)
@@ -88,6 +86,7 @@ namespace SparkTTS.Models
 
             try
             {
+                await InitializeOutputMelBandsAsync();
                 // Use the new LoadInput/Run pattern
                 var outputs = await Run(inputs);
                 

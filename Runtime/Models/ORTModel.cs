@@ -28,7 +28,7 @@ namespace SparkTTS.Models
         private List<NamedOnnxValue> _inputs;
         private readonly bool _preAllocateOutputs = false;
         private List<NamedOnnxValue> _preallocatedOutputs;
-        protected readonly Task<InferenceSession> _loadTask;
+        protected Task<InferenceSession> _loadTask = null;
         private bool _disposed = false;
         
         // Static logging configuration
@@ -109,12 +109,24 @@ namespace SparkTTS.Models
                     modelFolder)
             };
             _preAllocateOutputs = preAllocateOutputs;
-            _loadTask = LoadModelAsync();
         }
 
         #endregion
 
         #region Public Methods - Input Loading
+
+        /// <summary>
+        /// Starts the asynchronous loading operation.
+        /// </summary>
+        /// <returns>A task that represents the asynchronous loading operation</returns>
+        public void StartLoadingAsync()
+        {
+            if (IsInitialized)
+                return;
+
+            _loadTask = LoadModelAsync();
+            _loadTask.Start();
+        }
 
         /// <summary>
         /// Asynchronously loads a tensor input at the specified index.
@@ -161,14 +173,14 @@ namespace SparkTTS.Models
 
         #endregion
 
-        #region Public Methods - Model Execution
+        #region Protected Methods - Model Execution
 
         /// <summary>
         /// Asynchronously runs the model with the provided input tensors.
         /// </summary>
         /// <param name="inputTensors">The list of input tensors for model execution</param>
         /// <returns>A task containing the list of named output values</returns>
-        public async Task<List<NamedOnnxValue>> Run(List<Tensor<float>> inputTensors)
+        protected async Task<List<NamedOnnxValue>> Run(List<Tensor<float>> inputTensors)
         {
             if (inputTensors == null)
                 throw new ArgumentNullException(nameof(inputTensors));
@@ -187,7 +199,7 @@ namespace SparkTTS.Models
         /// Asynchronously runs the model with previously loaded inputs.
         /// </summary>
         /// <returns>A task containing the list of named output values</returns>
-        public async Task<List<NamedOnnxValue>> Run()
+        protected async Task<List<NamedOnnxValue>> Run()
         {
             await _loadTask;
             
@@ -227,7 +239,7 @@ namespace SparkTTS.Models
         /// </summary>
         /// <param name="inputTensors">The list of input tensors for model execution</param>
         /// <returns>A task containing the disposable collection of named output values</returns>
-        public async Task<IDisposableReadOnlyCollection<DisposableNamedOnnxValue>> RunDisposable(List<Tensor<float>> inputTensors)
+        protected async Task<IDisposableReadOnlyCollection<DisposableNamedOnnxValue>> RunDisposable(List<Tensor<float>> inputTensors)
         {
             if (inputTensors == null)
                 throw new ArgumentNullException(nameof(inputTensors));
@@ -241,7 +253,7 @@ namespace SparkTTS.Models
         /// Asynchronously runs the model with disposable outputs.
         /// </summary>
         /// <returns>A task containing the disposable collection of named output values</returns>
-        public async Task<IDisposableReadOnlyCollection<DisposableNamedOnnxValue>> RunDisposable()
+        protected async Task<IDisposableReadOnlyCollection<DisposableNamedOnnxValue>> RunDisposable()
         {
             await _loadTask;
             
@@ -279,7 +291,7 @@ namespace SparkTTS.Models
 
         #endregion
 
-        #region Public Methods - Output Management
+        #region Protected Methods - Output Management
 
         /// <summary>
         /// Asynchronously retrieves a preallocated output tensor by name.
@@ -287,7 +299,7 @@ namespace SparkTTS.Models
         /// <typeparam name="T">The tensor element type</typeparam>
         /// <param name="outputName">The name of the output tensor to retrieve</param>
         /// <returns>A task containing the requested preallocated output tensor</returns>
-        public async Task<Tensor<T>> GetPreallocatedOutput<T>(string outputName)
+        protected async Task<Tensor<T>> GetPreallocatedOutput<T>(string outputName)
         {
             if (string.IsNullOrEmpty(outputName))
                 throw new ArgumentNullException(nameof(outputName));
@@ -307,7 +319,7 @@ namespace SparkTTS.Models
         /// Asynchronously retrieves all preallocated output tensors.
         /// </summary>
         /// <returns>A task containing the list of all preallocated output tensors</returns>
-        public async Task<List<NamedOnnxValue>> GetPreallocatedOutputs()
+        protected async Task<List<NamedOnnxValue>> GetPreallocatedOutputs()
         {
             await _loadTask;
             return _preallocatedOutputs;
@@ -424,9 +436,9 @@ namespace SparkTTS.Models
         /// Asynchronously loads the ONNX model and initializes input/output metadata.
         /// </summary>
         /// <returns>A task containing the loaded InferenceSession</returns>
-        private async Task<InferenceSession> LoadModelAsync()
+        private Task<InferenceSession> LoadModelAsync()
         {
-            return await Task.Run(() =>
+            return new Task<InferenceSession>(() =>
             {
                 string modelPath = GetModelPath(_config.ModelName);
                 if (!File.Exists(modelPath))
@@ -789,6 +801,9 @@ namespace SparkTTS.Models
                     _session?.Dispose();
                     _inputs?.Clear();
                     _preallocatedOutputs?.Clear();
+                    IsInitialized = false;
+                    _loadTask?.Dispose();
+                    _loadTask = null;
                     
                     Logger.Log($"[{_config?.ModelName ?? "ORTModel"}] Disposed successfully");
                 }
