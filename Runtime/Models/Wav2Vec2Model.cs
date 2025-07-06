@@ -22,7 +22,8 @@ namespace SparkTTS.Models
         /// </summary>
         public Wav2Vec2Model()
             : base(SparkTTSModelPaths.Wav2Vec2ModelName, 
-                   SparkTTSModelPaths.Wav2Vec2Folder)
+                   SparkTTSModelPaths.Wav2Vec2Folder,
+                  precision: Precision.FP16)
         {
             Logger.LogVerbose("[Wav2Vec2Model] Initialized successfully");
         }
