@@ -733,11 +733,7 @@ namespace SparkTTS.Models
         /// <returns>The full path to the CoreML cache directory</returns>
         private string GetCoreMLCacheDirectory()
         {
-            if (!string.IsNullOrEmpty(_config.ModelPath))
-            {
-                return Path.Combine(_config.ModelPath, "coreml_cache");
-            }
-            return Path.Combine(Application.persistentDataPath, "coreml_cache");
+            return Path.Combine(Application.dataPath, "coreml_cache");
         }
 
         /// <summary>
