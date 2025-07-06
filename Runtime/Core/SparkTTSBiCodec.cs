@@ -13,7 +13,6 @@ namespace SparkTTS.Core
     internal class SparkTTSBiCodec : IDisposable
     {
         private readonly VocoderModel _vocoderModel;
-        private readonly BiCodecEncoderQuantizerModel _encoderQuantizerModel;
         private bool _disposed = false;
 
         /// <summary>
@@ -21,27 +20,9 @@ namespace SparkTTS.Core
         /// </summary>
         /// <param name="vocoderModel">ONNX model for generating waveforms from tokens</param>
         /// <param name="encoderQuantizerModel">ONNX model for encoding features to tokens</param>
-        internal SparkTTSBiCodec(VocoderModel vocoderModel, BiCodecEncoderQuantizerModel encoderQuantizerModel)
+        internal SparkTTSBiCodec(VocoderModel vocoderModel)
         {
             _vocoderModel = vocoderModel ?? throw new ArgumentNullException(nameof(vocoderModel));
-            _encoderQuantizerModel = encoderQuantizerModel ?? throw new ArgumentNullException(nameof(encoderQuantizerModel));
-        }
-
-        /// <summary>
-        /// Asynchronously tokenizes audio features into semantic tokens (Python: BiCodec.tokenize equivalent function)
-        /// </summary>
-        /// <param name="features">Feature tensor data</param>
-        /// <param name="shape">Shape of the feature tensor</param>
-        /// <returns>A task containing list of semantic token IDs</returns>
-        public async Task<List<long>> TokenizeAsync(float[] features, int[] shape)
-        {            
-            var result = await _encoderQuantizerModel.GenerateSemanticTokensAsync(features, shape);
-            if (result.HasValue)
-            {
-                return new List<long>(result.Value.semanticTokensData);
-            }
-            
-            return null;
         }
 
         /// <summary>
@@ -62,12 +43,15 @@ namespace SparkTTS.Core
             int[] semanticShape = { 1, semanticTokens.Length };
             int[] globalShape = { 1, 1, globalTokens.Length };
 
-            return await _vocoderModel.SynthesizeAsync(
+            _vocoderModel.StartLoadingAsync();
+            var waveform = await _vocoderModel.SynthesizeAsync(
                 semanticTokens,
                 semanticShape, 
                 globalTokens, 
                 globalShape
             );
+            _vocoderModel.Dispose();
+            return waveform;
         }
 
         /// <summary>
@@ -98,7 +82,6 @@ namespace SparkTTS.Core
                 if (disposing)
                 {
                     _vocoderModel?.Dispose();
-                    _encoderQuantizerModel?.Dispose();
                 }
 
                 _disposed = true;

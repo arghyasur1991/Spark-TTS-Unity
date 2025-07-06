@@ -155,6 +155,7 @@ namespace SparkTTS.Core
                     _wav2Vec2Model,
                     _encoderQuantizerModel
                 );
+                _biCodec = new SparkTTSBiCodec(_vocoderModel);
 
                 _totalTimer = new AggregatedTimer("SparkTTS");
                 _tokenizationTimer = new AggregatedTimer("Tokenization");
@@ -164,8 +165,6 @@ namespace SparkTTS.Core
                 _vocoderTimer = new AggregatedTimer("Vocoder");
                 _audioLoaderTimer = new AggregatedTimer("Audio Loader");
                 _updateTextInTokenizedInputsTimer = new AggregatedTimer("Update Text in Tokenized Inputs");
-                
-                _biCodec = new SparkTTSBiCodec(_vocoderModel, _encoderQuantizerModel);
                 IsInitialized = true;
                 Logger.LogVerbose("[SparkTTS] Successfully initialized all components.");
             }
@@ -335,7 +334,6 @@ namespace SparkTTS.Core
             // Step 1: Tokenize inputs if not provided
             if (modelInputs == null || isControlMode)
             {
-                StartLoadingGeneratorModels();
                 if (text == null)
                 {
                     Logger.LogError("[SparkTTS.Inference] Either text or modelInputs must be provided");
@@ -347,10 +345,6 @@ namespace SparkTTS.Core
                 var endTokenizationTime = Stopwatch.GetTimestamp();
                 _tokenizationTimer.AddTiming(startTime, endTokenizationTime);
             }
-            else
-            {
-                StartLoadingVoiceCloningModels();
-            }
 
             if (modelInputs == null)
             {
@@ -361,13 +355,14 @@ namespace SparkTTS.Core
             // Step 2: Generate tokens using LLM
             
             var startSemanticTokenGeneration = Stopwatch.GetTimestamp();
-
+            _llmModel.StartLoadingAsync();
             List<int> generatedIds = await _llmModel.GenerateSemanticTokensAsync(
                 modelInputs, 
                 maxNewTokens, 
                 temperature, 
                 topK, 
                 topP);
+            _llmModel.Dispose();
 
             var endSemanticTokenGeneration = Stopwatch.GetTimestamp();
             _modelGenerationTimer.AddTiming(startSemanticTokenGeneration, endSemanticTokenGeneration);
@@ -459,7 +454,7 @@ namespace SparkTTS.Core
             }
             return new TTSInferenceResult { Success = true, Waveform = waveform, ModelInputs = modelInputs, GlobalTokenIds = globalTokensForBiCodec.ToArray() };
         }
-        public void DisposeModels()
+        private void DisposeModels()
         {
             _llmModel?.Dispose();
             _melModel?.Dispose();

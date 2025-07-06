@@ -121,7 +121,7 @@ namespace SparkTTS.Models
         /// <returns>A task that represents the asynchronous loading operation</returns>
         public void StartLoadingAsync()
         {
-            if (IsInitialized)
+            if (IsInitialized || _loadTask != null)
                 return;
 
             _loadTask = LoadModelAsync();
