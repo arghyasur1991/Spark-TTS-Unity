@@ -31,7 +31,7 @@ namespace SparkTTS.Core
         /// <param name="semanticTokens">Array of semantic tokens</param>
         /// <param name="globalTokens">Array of global tokens</param>
         /// <returns>A task containing synthesized audio waveform as float array</returns>
-        public async Task<float[]> DetokenizeAsync(long[] semanticTokens, int[] globalTokens)
+        public async Task<float[]> DetokenizeAsync(long[] semanticTokens, int[] globalTokens, bool standaloneLoading = true)
         {
             if (semanticTokens == null || globalTokens == null)
             {
@@ -42,37 +42,15 @@ namespace SparkTTS.Core
             // Prepare shapes for VocoderModel
             int[] semanticShape = { 1, semanticTokens.Length };
             int[] globalShape = { 1, 1, globalTokens.Length };
-
-            _vocoderModel.StartLoadingAsync();
-            var waveform = await _vocoderModel.SynthesizeAsync(
+            var waveform = await _vocoderModel.RunAsync(
+                async () => await _vocoderModel.SynthesizeAsync(
                 semanticTokens,
                 semanticShape, 
                 globalTokens, 
                 globalShape
-            );
-            _vocoderModel.Dispose();
+            ),
+            standaloneLoading: standaloneLoading);
             return waveform;
-        }
-
-        /// <summary>
-        /// Asynchronously converts LLM-generated semantic tokens and global speaker tokens into a waveform.
-        /// Uses DetokenizeAsync internally for consistency.
-        /// </summary>
-        /// <param name="llmGeneratedSemanticTokens">List of semantic token IDs from the LLM.</param>
-        /// <param name="globalSpeakerTokens">List of global speaker token IDs.</param>
-        /// <returns>A task containing synthesized waveform as a float array.</returns>
-        public async Task<float[]> DetokenizeToWaveformAsync(List<long> llmGeneratedSemanticTokens, List<int> globalSpeakerTokens)
-        {
-            if (llmGeneratedSemanticTokens == null || globalSpeakerTokens == null)
-            {
-                Logger.LogError("[SparkTTSBiCodec.DetokenizeToWaveform] Input tokens are null.");
-                return null;
-            }
-
-            return await DetokenizeAsync(
-                llmGeneratedSemanticTokens.ToArray(),
-                globalSpeakerTokens.ToArray()
-            );
         }
 
         protected virtual void Dispose(bool disposing)

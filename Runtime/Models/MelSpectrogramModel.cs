@@ -63,6 +63,17 @@ namespace SparkTTS.Models
             }
         }
 
+        public async Task<(float[] melData, int[] melShape)?> GenerateProcessedMelSpectrogramAsync(float[] monoAudioSamples)
+        {
+            (float[] melData, int[] melShape)? rawMelTuple = await GenerateMelSpectrogramAsync(monoAudioSamples);
+            if (!rawMelTuple.HasValue) { Logger.LogError("[MelSpectrogramModel] Failed to generate raw mel spectrogram."); return (null, null); }
+
+            (float[] processedMelData, int[] processedMelShape)? processedMelTuple = ProcessMelForSpeakerEncoder(rawMelTuple.Value);
+            if (!processedMelTuple.HasValue) { Logger.LogError("[MelSpectrogramModel] Failed to process mel spectrogram."); return (null, null); }
+
+            return processedMelTuple;
+        }
+
         /// <summary>
         /// Asynchronously generates a mel spectrogram from raw mono audio samples.
         /// Uses the consistent LoadInput/Run pattern for professional model execution.

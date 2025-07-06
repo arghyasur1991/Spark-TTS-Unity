@@ -128,6 +128,20 @@ namespace SparkTTS.Models
             _loadTask.Start();
         }
 
+        public async Task<T> RunAsync<T>(Func<Task<T>> func, bool standaloneLoading = true)
+        {
+            if (standaloneLoading)
+            {
+                StartLoadingAsync();
+            }
+            var result = await func();
+            if (standaloneLoading)
+            {
+                Dispose();
+            }
+            return result;
+        }
+
         /// <summary>
         /// Asynchronously loads a tensor input at the specified index.
         /// </summary>

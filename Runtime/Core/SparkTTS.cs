@@ -15,6 +15,7 @@ namespace SparkTTS.Core
     
     public class TTSInferenceConfig
     {
+        public bool OptimalMemoryUsage { get; set; } = false;
         public string TextToSynthesize { get; set; }
         public AudioClip ReferenceAudioClip { get; set; } // For voice cloning
         public int TargetSampleRate { get; set; } = 16000;
@@ -91,6 +92,7 @@ namespace SparkTTS.Core
         private readonly AggregatedTimer _audioLoaderTimer;
         private readonly AggregatedTimer _updateTextInTokenizedInputsTimer;
         public static bool LogTiming = false;
+        private readonly bool _optimalMemoryUsage = false;
 
         public bool IsInitialized { get; private set; } = false;
         private bool _disposed = false;
@@ -107,6 +109,7 @@ namespace SparkTTS.Core
         {
             try
             {
+                _optimalMemoryUsage = config.OptimalMemoryUsage;
                 _audioLoaderService = new AudioLoaderService();
                 // --- Initialize Text Tokenizer Service ---
                 Logger.LogVerbose("[SparkTTS] Initializing TokenizerService...");
@@ -243,7 +246,7 @@ namespace SparkTTS.Core
             if (promptSpeechSamples != null)
             {
                 // Voice cloning mode
-                var (globalTokens, semanticTokens) = await _audioTokenizer.TokenizeAsync(promptSpeechSamples);
+                var (globalTokens, semanticTokens) = await _audioTokenizer.TokenizeAsync(promptSpeechSamples, _optimalMemoryUsage);
                 globalTokenIds = globalTokens;
                 List<long> acousticSemanticTokens = semanticTokens;
 
@@ -334,6 +337,10 @@ namespace SparkTTS.Core
             // Step 1: Tokenize inputs if not provided
             if (modelInputs == null || isControlMode)
             {
+                if (!_optimalMemoryUsage)
+                {
+                    StartLoadingGeneratorModels();
+                }
                 if (text == null)
                 {
                     Logger.LogError("[SparkTTS.Inference] Either text or modelInputs must be provided");
@@ -351,18 +358,21 @@ namespace SparkTTS.Core
                 Logger.LogError("[SparkTTS.Inference] Failed to create model inputs");
                 return new TTSInferenceResult { Success = false, ErrorMessage = "Failed to create model inputs" };
             }
-
+            if (!_optimalMemoryUsage)
+            {
+                StartLoadingVoiceCloningModels();
+            }
             // Step 2: Generate tokens using LLM
-            
             var startSemanticTokenGeneration = Stopwatch.GetTimestamp();
-            _llmModel.StartLoadingAsync();
-            List<int> generatedIds = await _llmModel.GenerateSemanticTokensAsync(
-                modelInputs, 
-                maxNewTokens, 
-                temperature, 
-                topK, 
-                topP);
-            _llmModel.Dispose();
+
+            List<int> generatedIds = await _llmModel.RunAsync(
+                async () => await _llmModel.GenerateSemanticTokensAsync(
+                    modelInputs, 
+                    maxNewTokens, 
+                    temperature, 
+                    topK, 
+                    topP),
+                standaloneLoading: _optimalMemoryUsage);
 
             var endSemanticTokenGeneration = Stopwatch.GetTimestamp();
             _modelGenerationTimer.AddTiming(startSemanticTokenGeneration, endSemanticTokenGeneration);
@@ -427,7 +437,7 @@ namespace SparkTTS.Core
             Logger.LogVerbose($"[SparkTTS.Inference] Generating waveform from tokens: {semanticTokenIds.Count} semantic tokens, {globalTokensForBiCodec.Count} global tokens");
 
             // Use the appropriate global tokens (extracted for control mode, from input for cloning)
-            float[] waveform = await _biCodec.DetokenizeToWaveformAsync(semanticTokenIds, globalTokensForBiCodec);
+            float[] waveform = await _biCodec.DetokenizeAsync(semanticTokenIds.ToArray(), globalTokensForBiCodec.ToArray(), _optimalMemoryUsage);
             var endAudioConversion = Stopwatch.GetTimestamp();
             _vocoderTimer.AddTiming(startAudioConversion, endAudioConversion);
 
@@ -462,6 +472,18 @@ namespace SparkTTS.Core
             _wav2Vec2Model?.Dispose();
             _encoderQuantizerModel?.Dispose();
             _vocoderModel?.Dispose();
+        }
+
+        public void DisposeGeneratorOnlyModels()
+        {
+            if (_optimalMemoryUsage)
+            {
+                return;
+            }
+            _melModel?.Dispose();
+            _speakerEncoderModel?.Dispose();
+            _wav2Vec2Model?.Dispose();
+            _encoderQuantizerModel?.Dispose();
         }
 
         /// <summary>

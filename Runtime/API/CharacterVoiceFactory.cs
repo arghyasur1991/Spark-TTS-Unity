@@ -26,6 +26,7 @@ namespace SparkTTS
         internal CharacterVoiceFactory()
         {
             var initConfig = new TTSInferenceConfig();
+            initConfig.OptimalMemoryUsage = false;
             _sparkTts = new SparkTTS(initConfig);
             _initialized = _sparkTts.IsInitialized;
         }
@@ -69,6 +70,7 @@ namespace SparkTTS
                 );
 
                 await voice.GenerateVoiceAsync(referenceText);
+                _sparkTts.DisposeGeneratorOnlyModels();
                 return voice;
             }
             catch (Exception e)
