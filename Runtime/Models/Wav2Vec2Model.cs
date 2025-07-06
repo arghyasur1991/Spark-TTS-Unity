@@ -22,9 +22,10 @@ namespace SparkTTS.Models
         /// </summary>
         public Wav2Vec2Model()
             : base(SparkTTSModelPaths.Wav2Vec2ModelName, 
-                   SparkTTSModelPaths.Wav2Vec2Folder)
+                   SparkTTSModelPaths.Wav2Vec2Folder,
+                  precision: Precision.FP16)
         {
-            Logger.Log("[Wav2Vec2Model] Initialized successfully");
+            Logger.LogVerbose("[Wav2Vec2Model] Initialized successfully");
         }
 
         /// <summary>
@@ -48,12 +49,12 @@ namespace SparkTTS.Models
             var inputTensor = new DenseTensor<float>(monoAudioSamples, inputShape);
             var inputs = new List<Tensor<float>> { inputTensor };
 
-            Logger.Log($"[Wav2Vec2Model] Running inference with input shape: [{string.Join(",", inputShape)}]");
+            Logger.LogVerbose($"[Wav2Vec2Model] Running inference with input shape: [{string.Join(",", inputShape)}]");
 
             try
             {
                 // Use the new LoadInput/Run pattern
-                var outputs = await RunDisposable(inputs);
+                using var outputs = await RunDisposable(inputs);
                 
                 // Get the first output (features)
                 var outputValue = outputs.FirstOrDefault();
@@ -70,7 +71,7 @@ namespace SparkTTS.Models
                 var features = outputTensor.Buffer.ToArray();
                 var shape = outputTensor.Dimensions.ToArray().Select(d => (int)d).ToArray();
                 
-                Logger.Log($"[Wav2Vec2Model] Successfully generated features. Shape: [{string.Join(",", shape)}]");
+                Logger.LogVerbose($"[Wav2Vec2Model] Successfully generated features. Shape: [{string.Join(",", shape)}]");
                 
                 return (features, shape);
             }

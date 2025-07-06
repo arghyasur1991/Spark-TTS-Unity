@@ -60,7 +60,7 @@ namespace SparkTTS.Models
             try
             {
                 // Use the new LoadInput/Run pattern
-                var outputs = await RunDisposable(inputs);
+                using var outputs = await RunDisposable(inputs);
                 
                 // Get the first output (semantic tokens)
                 var outputValue = outputs.FirstOrDefault();

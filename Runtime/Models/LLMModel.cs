@@ -25,7 +25,7 @@ namespace SparkTTS.Models
         private static readonly ThreadLocal<Random> _threadLocalRandom = 
             new(() => new Random(Guid.NewGuid().GetHashCode()));
 
-        public static bool LogTiming = false;
+        public static bool LogTiming = true;
 
         // Model input/output names, populated by InspectAndPopulateNames
         private string _inputIDsName;
@@ -45,16 +45,10 @@ namespace SparkTTS.Models
 
         // Special token IDs
         private readonly int _eosTokenId;
-        
         private readonly float[] _filteredLogits;
         private readonly int[] _filteredIndices;
-        private readonly List<(float prob, int index, float logit)> _probIndexList = new(1000);
-        private readonly List<float> _nucleusLogits = new(1000);
-        private readonly List<int> _nucleusIndices = new(1000);
         private int[] _indices;
-        // Pre-allocated arrays for softmax computations
-        private readonly float[] _expLogitsBuffer = new float[1000];
-        private float[] _probsBuffer = new float[1000];
+        private float[] _probsBuffer;
         
         // Pre-allocated buffer for top-K filtering
         private (float logit, int index)[] _topKHeap;
@@ -104,10 +98,7 @@ namespace SparkTTS.Models
                 LogSeverityLevel = OrtLogLevel
             };
 
-            Logger.Log("[LLMModel] Initialized successfully");
-            
-            // Initialize model metadata asynchronously
-            _ = InitializeModelMetadataAsync();
+            Logger.LogVerbose("[LLMModel] Initialized successfully");
         }
 
         /// <summary>
@@ -118,11 +109,9 @@ namespace SparkTTS.Models
         {
             try
             {
-                // Wait for model to be loaded
                 await _loadTask;
-                
                 // Get preallocated outputs to inspect metadata
-                var outputs = await GetPreallocatedOutputs();
+                var outputs = await GetOutputNames();
                 
                 // Dynamically detect input/output names by pattern matching
                 _inputIDsName = "input_ids";
@@ -133,7 +122,7 @@ namespace SparkTTS.Models
                 // Detect KV cache structure from outputs
                 foreach (var output in outputs)
                 {
-                    var name = output.Name;
+                    var name = output;
                     
                     // Detect logits output
                     if (name.Contains("logits"))
@@ -142,9 +131,9 @@ namespace SparkTTS.Models
                     }
                     
                     // Detect present key/value outputs for KV cache
-                    var kvMatch = System.Text.RegularExpressions.Regex.Match(name, @"present\.(\d+)\.(key|value)");
+                    var kvMatch = Regex.Match(name, @"present\.(\d+)\.(key|value)");
                     if (!kvMatch.Success) 
-                        kvMatch = System.Text.RegularExpressions.Regex.Match(name, @"present_key_values\.(\d+)\.(key|value)");
+                        kvMatch = Regex.Match(name, @"present_key_values\.(\d+)\.(key|value)");
                     
                     if (kvMatch.Success)
                     {
@@ -160,12 +149,13 @@ namespace SparkTTS.Models
                             _numLLMLayers = layerIndex + 1;
                         
                         // Extract dimension info from tensor metadata if available
-                        if (output.Value is DenseTensor<float> tensor && tensor.Dimensions.Length == 4)
+                        var outputDimensions = await GetOutputDimensions(output);
+                        if (outputDimensions != null && outputDimensions.Length == 4)
                         {
-                            if (_numAttentionHeads == 0 && tensor.Dimensions[1] > 0) 
-                                _numAttentionHeads = (int)tensor.Dimensions[1];
-                            if (_headDimension == 0 && tensor.Dimensions[3] > 0) 
-                                _headDimension = (int)tensor.Dimensions[3];
+                            if (_numAttentionHeads == 0 && outputDimensions[1] > 0) 
+                                _numAttentionHeads = (int)outputDimensions[1];
+                            if (_headDimension == 0 && outputDimensions[3] > 0) 
+                                _headDimension = (int)outputDimensions[3];
                         }
                     }
                 }
@@ -187,7 +177,7 @@ namespace SparkTTS.Models
                         _outputNames.Add(valueName);
                 }
                 
-                Logger.Log($"[LLMModel] Model metadata initialized dynamically - " +
+                Logger.LogVerbose($"[LLMModel] Model metadata initialized dynamically - " +
                           $"Layers: {_numLLMLayers}, Heads: {_numAttentionHeads}, HeadDim: {_headDimension}");
                           
                 if (_numLLMLayers == 0)
@@ -233,10 +223,7 @@ namespace SparkTTS.Models
             int topK = 50,
             float topP = 0.95f)
         {
-            if (!IsInitialized) 
-            { 
-                throw new InvalidOperationException("[LLMModel] Model not initialized"); 
-            }
+            await InitializeModelMetadataAsync();
             if (llmInitialInput == null || !llmInitialInput.InputIds.Any()) 
             { 
                 throw new ArgumentNullException(nameof(llmInitialInput), "Initial input is null or empty"); 
@@ -267,7 +254,7 @@ namespace SparkTTS.Models
             {
                 var startTime = Stopwatch.GetTimestamp();
                 // 1. Process initial prompt
-                Logger.Log("[LLM.GenTokens] Preparing initial prompt processing pass...");
+                Logger.LogVerbose("[LLM.GenTokens] Preparing initial prompt processing pass...");
                 
                 // Convert input IDs - avoid multiple enumerations with ToArray outside of Select
                 int[] intInputIds = llmInitialInput.InputIds.ToArray();
@@ -300,13 +287,13 @@ namespace SparkTTS.Models
                     topK, 
                     topP);
 
-                Logger.Log($"[LLMModel.GenTokens InitialPass] Next token ID: {nextTokenId}");
+                Logger.LogVerbose($"[LLMModel.GenTokens InitialPass] Next token ID: {nextTokenId}");
                 newlyGeneratedTokenIds.Add(nextTokenId);
 
                 // Check if generation should end
                 if (nextTokenId == _eosTokenId)
                 {
-                    Logger.Log("[LLMModel.GenTokens] EOS token generated after initial prompt. Stopping.");
+                    Logger.LogVerbose("[LLMModel.GenTokens] EOS token generated after initial prompt. Stopping.");
                     return newlyGeneratedTokenIds;
                 }
 
@@ -316,7 +303,7 @@ namespace SparkTTS.Models
                 // 2. Autoregressive generation loop
                 for (int step = 0; step < maxNewTokens - 1; ++step) // -1 because one token already generated
                 {
-                    Logger.Log($"--- [LLMModel.GenTokens Loop] Step {step} --- (Generating token {newlyGeneratedTokenIds.Count + 1})");
+                    Logger.LogVerbose($"--- [LLMModel.GenTokens Loop] Step {step} --- (Generating token {newlyGeneratedTokenIds.Count + 1})");
                     int currentTokenIdForInput = newlyGeneratedTokenIds[newlyGeneratedTokenIds.Count - 1];
                     
                     // Generate inputs for single token step
@@ -341,13 +328,13 @@ namespace SparkTTS.Models
                         topK, 
                         topP);
 
-                    Logger.Log($"[LLMModel.GenTokens Loop Step {step}] Next token ID: {nextTokenId}");
+                    Logger.LogVerbose($"[LLMModel.GenTokens Loop Step {step}] Next token ID: {nextTokenId}");
                     newlyGeneratedTokenIds.Add(nextTokenId);
 
                     // Check if generation should end
                     if (nextTokenId == _eosTokenId)
                     {
-                        Logger.Log($"[LLMModel.GenTokens] EOS token generated at step {step}. Stopping.");
+                        Logger.LogVerbose($"[LLMModel.GenTokens] EOS token generated at step {step}. Stopping.");
                         break;
                     }
 
@@ -377,6 +364,13 @@ namespace SparkTTS.Models
                     _prepareStepInputsTimer.LogTiming();
                     _generateSemanticTokensTimer.LogTiming();
                 }
+                _cachedKvTensors = null;
+                _isKvCacheInitialized = false;
+                _sortedLogits = null;
+                _sortedIndices = null;
+                _topKHeap = null;
+                _probsBuffer = null;
+                _indices = null;
             }
 
             return newlyGeneratedTokenIds;
@@ -402,7 +396,7 @@ namespace SparkTTS.Models
             DenseTensor<long> inputIdsTensor = new(new Memory<long>(inputIdsData), inputIdsShape);
             inputsForCurrentStep.Add(NamedOnnxValue.CreateFromTensor<long>(_inputIDsName, inputIdsTensor));
 
-            Logger.Log($"[LLM.GenTokens] Input IDs for initial pass ({inputIdsData.Length}): [{string.Join(", ", inputIdsData.Take(50))}{(inputIdsData.Length > 50 ? "..." : "")}]");
+            Logger.LogVerbose($"[LLM.GenTokens] Input IDs for initial pass ({inputIdsData.Length}): [{string.Join(", ", inputIdsData.Take(50))}{(inputIdsData.Length > 50 ? "..." : "")}]");
 
             // Attention mask tensor
             if (!string.IsNullOrEmpty(_attentionMaskName) && attentionMaskData != null)
@@ -538,7 +532,7 @@ namespace SparkTTS.Models
                 return null;
             }
 
-            Logger.Log($"[LLMModel.RunInference] Running inference with {inputs.Count} inputs. Extract KV: {extractKvCache}");
+            Logger.LogVerbose($"[LLMModel.RunInference] Running inference with {inputs.Count} inputs. Extract KV: {extractKvCache}");
 
             try
             {
@@ -562,7 +556,7 @@ namespace SparkTTS.Models
                 }
 
                 // Run inference using the new pattern
-                var outputs = await RunDisposable();
+                using var outputs = await RunDisposable();
                 
                 // Create output structure
                 var output = new InferenceOutput();
@@ -874,8 +868,10 @@ namespace SparkTTS.Models
             // Apply Top-P (Nucleus) filtering on the Top-K results
             if (topP < 1.0f && topP > 0.0f && numFiltered > 1) // Only apply if topP < 1.0 and we have multiple tokens
             {
-                // Ensure our buffer is large enough
-                EnsureBufferSize(ref _probsBuffer, numFiltered);
+                if (_probsBuffer == null || _probsBuffer.Length < numFiltered)
+                {
+                    _probsBuffer = new float[numFiltered];
+                }
                 
                 // Apply softmax to get probabilities for nucleus sampling
                 ComputeSoftmax(_sortedLogits, 0, numFiltered, _probsBuffer);

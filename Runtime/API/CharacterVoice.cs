@@ -1,6 +1,9 @@
-using UnityEngine;
-using System.Threading.Tasks;
 using System;
+using System.IO;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Newtonsoft.Json;
+using UnityEngine;
 
 namespace SparkTTS
 {
@@ -52,16 +55,135 @@ namespace SparkTTS
             _referenceWaveform = _sparkTts.LoadAudioClip(referenceClip, 16000);
         }
 
+        internal CharacterVoice(SparkTTS sparkTts)
+        {
+            _sparkTts = sparkTts ?? throw new ArgumentNullException(nameof(sparkTts));
+        }
+
+        internal async Task LoadVoiceAsync(string voiceFolder)
+        {
+            string configPath = Path.Combine(voiceFolder, "voice_config.json");
+            string configJson = File.ReadAllText(configPath);
+            var voiceConfig = JsonConvert.DeserializeObject<VoiceConfig>(configJson);
+            Gender = voiceConfig.gender;
+            Pitch = voiceConfig.pitch;
+            Speed = voiceConfig.speed;
+            
+            // Load the audio file
+            string audioFilePath = Path.Combine(voiceFolder, voiceConfig.audioFile);
+            ReferenceClip = await AudioLoaderService.LoadAudioClipAsync(audioFilePath);
+            _referenceWaveform = _sparkTts.LoadAudioClip(ReferenceClip, 16000);
+
+            // Load the global tokens
+            string globalTokensPath = Path.Combine(voiceFolder, "global_tokens.bin");
+            using (var stream = new MemoryStream(File.ReadAllBytes(globalTokensPath)))
+            {
+                using (var reader = new BinaryReader(stream))
+                {
+                    _cachedGlobalTokenIds = new int[reader.ReadInt32()];
+                    for (int i = 0; i < _cachedGlobalTokenIds.Length; i++)
+                    {
+                        _cachedGlobalTokenIds[i] = reader.ReadInt32();
+                    }
+                }
+            }
+
+            // Load the model inputs
+            string modelInputsPath = Path.Combine(voiceFolder, "model_inputs.bin");
+            using (var stream = new MemoryStream(File.ReadAllBytes(modelInputsPath)))
+            {
+                using (var reader = new BinaryReader(stream))
+                {
+                    _cachedModelInputs = new TokenizationOutput();
+                    _cachedModelInputs.InputIds = new List<int>();
+                    _cachedModelInputs.AttentionMask = new List<int>();
+                    int inputIdsCount = reader.ReadInt32();
+                    for (int i = 0; i < inputIdsCount; i++)
+                    {
+                        _cachedModelInputs.InputIds.Add(reader.ReadInt32());
+                    }
+                    int attentionMaskCount = reader.ReadInt32();
+                    for (int i = 0; i < attentionMaskCount; i++)
+                    {
+                        _cachedModelInputs.AttentionMask.Add(reader.ReadInt32());
+                    }
+                }
+            }
+        }
+
         public async Task GenerateVoiceAsync(string referenceText)
         {
             var result = await _sparkTts.InferenceAsync(referenceText, null, null, Gender, Pitch, Speed);
             
             // Store voice parameters
             _referenceWaveform = result.Waveform;
+            (TokenizationOutput modelInputs, int[] globalTokenIds) = await _sparkTts.TokenizeInputsAsync(referenceText, _referenceWaveform);
 
-            // Store pre-generated tokens if provided
-            _cachedGlobalTokenIds = result.GlobalTokenIds;
-            _cachedModelInputs = result.ModelInputs;
+            _cachedGlobalTokenIds = globalTokenIds;
+            _cachedModelInputs = modelInputs;
+        }
+
+        public async Task SaveVoiceAsync(string voiceFolder)
+        {
+            if (ReferenceClip != null)
+            {
+                // Convert AudioClip to WAV and save
+                string samplePath = Path.Combine(voiceFolder, "sample.wav");
+                await AudioLoaderService.SaveAudioClipToFile(ReferenceClip, samplePath);
+                Logger.LogVerbose($"[Character] Voice sample saved to: {samplePath}");
+
+                // Also save voice config for reference
+                var voiceConfig = new
+                {
+                    gender = Gender,
+                    pitch = Pitch,
+                    speed = Speed,
+                    timestamp = DateTime.UtcNow,
+                    audioFile = "sample.wav",
+                    sampleRate = ReferenceClip.frequency,
+                    channels = ReferenceClip.channels,
+                    length = ReferenceClip.length
+                };
+                
+                string configPath = Path.Combine(voiceFolder, "voice_config.json");
+                string configJson = JsonConvert.SerializeObject(voiceConfig, Formatting.Indented);
+                await File.WriteAllTextAsync(configPath, configJson);
+            }
+            if (_cachedGlobalTokenIds != null)
+            {
+                // Dump global tokens to a file
+                string globalTokensPath = Path.Combine(voiceFolder, "global_tokens.bin");
+                using (var stream = new MemoryStream())
+                {
+                    using (var writer = new BinaryWriter(stream))
+                    {
+                        writer.Write(_cachedGlobalTokenIds.Length);
+                        foreach (var token in _cachedGlobalTokenIds)
+                        {
+                            writer.Write(token);
+                        }
+                    }
+                    File.WriteAllBytes(globalTokensPath, stream.ToArray());
+                }
+
+                // Dump model inputs to a file
+                string modelInputsPath = Path.Combine(voiceFolder, "model_inputs.bin");
+                using (MemoryStream stream = new())
+                {
+                    using BinaryWriter writer = new(stream);
+                    writer.Write(_cachedModelInputs.InputIds.Count);
+                    foreach (var id in _cachedModelInputs.InputIds)
+                    {
+                        writer.Write(id);
+                    }
+                    writer.Write(_cachedModelInputs.AttentionMask.Count);
+                    foreach (var mask in _cachedModelInputs.AttentionMask)
+                    {
+                        writer.Write(mask);
+                    }
+                    File.WriteAllBytes(modelInputsPath, stream.ToArray());
+                }
+            }
         }
         
         /// <summary>
@@ -89,7 +211,6 @@ namespace SparkTTS
                 Logger.Log($"[CharacterVoice.GenerateSpeech] Generating speech for text: {text}");
                 
                 TTSInferenceResult result;
-                
                 // Check if we have cached tokens for optimization
                 if (_cachedModelInputs != null && _cachedGlobalTokenIds != null)
                 {
@@ -107,13 +228,13 @@ namespace SparkTTS
                         modelInputs: updatedInputs,
                         globalTokenIds: _cachedGlobalTokenIds);
                     
-                    Logger.Log("[CharacterVoice.GenerateSpeech] Used optimized generation with updated tokenized inputs");
+                    Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Used optimized generation with updated tokenized inputs");
                 }
                 else
                 {
                     // Run standard inference for first-time generation
                     result = await _sparkTts.InferenceAsync(text, _referenceWaveform, null, Gender, Pitch, Speed);
-                    Logger.Log("[CharacterVoice.GenerateSpeech] Used standard generation path");
+                    Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Used standard generation path");
                 }
                 
                 if (!result.Success || result.Waveform == null || result.Waveform.Length == 0)
@@ -137,15 +258,14 @@ namespace SparkTTS
                 if (_cachedGlobalTokenIds == null && result.GlobalTokenIds != null)
                 {
                     _cachedGlobalTokenIds = result.GlobalTokenIds;
-                    Logger.Log("[CharacterVoice.GenerateSpeech] Cached global tokens for future optimizations");
+                    Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Cached global tokens for future optimizations");
                 }
                 
                 if (_cachedModelInputs == null && result.ModelInputs != null)
                 {
                     _cachedModelInputs = result.ModelInputs;
-                    Logger.Log("[CharacterVoice.GenerateSpeech] Cached model inputs for future optimizations");
+                    Logger.LogVerbose("[CharacterVoice.GenerateSpeech] Cached model inputs for future optimizations");
                 }
-                
                 return clip;
             }
             catch (Exception e)
@@ -204,4 +324,16 @@ namespace SparkTTS
             Dispose();
         }
     }
-} 
+
+    internal class VoiceConfig
+    {
+        public string gender;
+        public string pitch;
+        public string speed;
+        public string timestamp;
+        public string audioFile;
+        public int sampleRate;
+        public int channels;
+        public float length;
+    }
+}

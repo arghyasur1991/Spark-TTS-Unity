@@ -26,8 +26,9 @@ namespace SparkTTS.Models
         private InferenceSession _session;
         private List<string> _inputNames = new();
         private List<NamedOnnxValue> _inputs;
+        private readonly bool _preAllocateOutputs = false;
         private List<NamedOnnxValue> _preallocatedOutputs;
-        protected readonly Task<InferenceSession> _loadTask;
+        protected Task<InferenceSession> _loadTask = null;
         private bool _disposed = false;
         
         // Static logging configuration
@@ -49,6 +50,31 @@ namespace SparkTTS.Models
         /// </summary>
         protected static OrtLoggingLevel OrtLogLevel => _ortLogLevel;
 
+        protected enum Precision
+        {
+            FP32,
+            FP16,
+            Int8
+        }
+
+        protected enum ExecutionProvider
+        {
+            /// <summary>
+            /// CPU execution provider - universal compatibility, moderate performance
+            /// </summary>
+            CPU,
+            
+            /// <summary>
+            /// CUDA execution provider - GPU acceleration for NVIDIA cards, high performance
+            /// </summary>
+            CUDA,
+            
+            /// <summary>
+            /// CoreML execution provider - Apple Silicon/macOS acceleration, optimized for Apple hardware
+            /// </summary>
+            CoreML
+        }
+
         #endregion
 
         #region Constructor
@@ -58,26 +84,63 @@ namespace SparkTTS.Models
         /// </summary>
         /// <param name="modelName">The name of the model file (without extension)</param>
         /// <param name="modelFolder">The folder containing the model (from SparkTTSModelPaths)</param>
-        protected ORTModel(string modelName, string modelFolder)
+        /// <param name="precision">The precision of the model</param>
+        /// <param name="executionProvider">The execution provider for the model</param>
+        protected ORTModel(
+            string modelName, 
+            string modelFolder, 
+            bool preAllocateOutputs = false,
+            Precision precision = Precision.FP32, 
+            ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
             if (string.IsNullOrEmpty(modelName))
                 throw new ArgumentNullException(nameof(modelName));
             if (modelFolder == null)
                 throw new ArgumentNullException(nameof(modelFolder));
-            
+
             _config = new ModelConfig
             {
                 ModelName = modelName,
-                ModelFolder = modelFolder,
-                ModelPath = GetModelPath(modelFolder, $"{modelName}.onnx")
+                Precision = precision,
+                ExecutionProvider = executionProvider,
+                ModelPath = Path.Combine(
+                    Application.streamingAssetsPath,
+                    SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets,
+                    modelFolder)
             };
-
-            _loadTask = LoadModelAsync();
+            _preAllocateOutputs = preAllocateOutputs;
         }
 
         #endregion
 
         #region Public Methods - Input Loading
+
+        /// <summary>
+        /// Starts the asynchronous loading operation.
+        /// </summary>
+        /// <returns>A task that represents the asynchronous loading operation</returns>
+        public void StartLoadingAsync()
+        {
+            if (IsInitialized || _loadTask != null)
+                return;
+            _disposed = false;
+            _loadTask = LoadModelAsync();
+            _loadTask.Start();
+        }
+
+        public async Task<T> RunAsync<T>(Func<Task<T>> func, bool standaloneLoading = true)
+        {
+            if (standaloneLoading)
+            {
+                StartLoadingAsync();
+            }
+            var result = await func();
+            if (standaloneLoading)
+            {
+                Dispose();
+            }
+            return result;
+        }
 
         /// <summary>
         /// Asynchronously loads a tensor input at the specified index.
@@ -124,18 +187,23 @@ namespace SparkTTS.Models
 
         #endregion
 
-        #region Public Methods - Model Execution
+        #region Protected Methods - Model Execution
 
         /// <summary>
         /// Asynchronously runs the model with the provided input tensors.
         /// </summary>
         /// <param name="inputTensors">The list of input tensors for model execution</param>
         /// <returns>A task containing the list of named output values</returns>
-        public async Task<List<NamedOnnxValue>> Run(List<Tensor<float>> inputTensors)
+        protected async Task<List<NamedOnnxValue>> Run(List<Tensor<float>> inputTensors)
         {
             if (inputTensors == null)
                 throw new ArgumentNullException(nameof(inputTensors));
-                
+            
+            if (!_preAllocateOutputs)
+            {
+                throw new InvalidOperationException("Pre-allocated outputs are not supported for this model. Use RunDisposable() instead.");
+            }
+            
             await _loadTask;
             await LoadInputs(inputTensors);
             return await Run();
@@ -145,7 +213,7 @@ namespace SparkTTS.Models
         /// Asynchronously runs the model with previously loaded inputs.
         /// </summary>
         /// <returns>A task containing the list of named output values</returns>
-        public async Task<List<NamedOnnxValue>> Run()
+        protected async Task<List<NamedOnnxValue>> Run()
         {
             await _loadTask;
             
@@ -162,7 +230,6 @@ namespace SparkTTS.Models
             
             try
             {
-                Logger.Log($"[{_config.ModelName}] Running model");
                 _session.Run(_inputs, _preallocatedOutputs, runOptions);
             }
             catch (Exception ex)
@@ -186,7 +253,7 @@ namespace SparkTTS.Models
         /// </summary>
         /// <param name="inputTensors">The list of input tensors for model execution</param>
         /// <returns>A task containing the disposable collection of named output values</returns>
-        public async Task<IDisposableReadOnlyCollection<DisposableNamedOnnxValue>> RunDisposable(List<Tensor<float>> inputTensors)
+        protected async Task<IDisposableReadOnlyCollection<DisposableNamedOnnxValue>> RunDisposable(List<Tensor<float>> inputTensors)
         {
             if (inputTensors == null)
                 throw new ArgumentNullException(nameof(inputTensors));
@@ -200,7 +267,7 @@ namespace SparkTTS.Models
         /// Asynchronously runs the model with disposable outputs.
         /// </summary>
         /// <returns>A task containing the disposable collection of named output values</returns>
-        public async Task<IDisposableReadOnlyCollection<DisposableNamedOnnxValue>> RunDisposable()
+        protected async Task<IDisposableReadOnlyCollection<DisposableNamedOnnxValue>> RunDisposable()
         {
             await _loadTask;
             
@@ -218,7 +285,6 @@ namespace SparkTTS.Models
             IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
             try
             {
-                Logger.Log($"[{_config.ModelName}] Running model");
                 results = _session.Run(_inputs, _session.OutputNames, runOptions);
             }
             catch (Exception ex)
@@ -239,7 +305,7 @@ namespace SparkTTS.Models
 
         #endregion
 
-        #region Public Methods - Output Management
+        #region Protected Methods - Output Management
 
         /// <summary>
         /// Asynchronously retrieves a preallocated output tensor by name.
@@ -247,7 +313,7 @@ namespace SparkTTS.Models
         /// <typeparam name="T">The tensor element type</typeparam>
         /// <param name="outputName">The name of the output tensor to retrieve</param>
         /// <returns>A task containing the requested preallocated output tensor</returns>
-        public async Task<Tensor<T>> GetPreallocatedOutput<T>(string outputName)
+        protected async Task<Tensor<T>> GetPreallocatedOutput<T>(string outputName)
         {
             if (string.IsNullOrEmpty(outputName))
                 throw new ArgumentNullException(nameof(outputName));
@@ -267,10 +333,27 @@ namespace SparkTTS.Models
         /// Asynchronously retrieves all preallocated output tensors.
         /// </summary>
         /// <returns>A task containing the list of all preallocated output tensors</returns>
-        public async Task<List<NamedOnnxValue>> GetPreallocatedOutputs()
+        protected async Task<List<NamedOnnxValue>> GetPreallocatedOutputs()
         {
             await _loadTask;
             return _preallocatedOutputs;
+        }
+
+        protected async Task<IReadOnlyList<string>> GetOutputNames()
+        {
+            await _loadTask;
+            return _session.OutputNames;
+        }
+
+        protected async Task<int[]> GetOutputDimensions(string outputName)
+        {
+            await _loadTask;
+            var outputMetadata = _session.OutputMetadata[outputName];
+            if (outputMetadata.IsTensor)
+            {
+                return outputMetadata.Dimensions;
+            }
+            return null;
         }
 
         #endregion
@@ -299,18 +382,23 @@ namespace SparkTTS.Models
         #region Protected Methods - Utilities
 
         /// <summary>
-        /// Gets the full path to a model file within the SparkTTS model structure.
+        /// Sets the full path to a model file within the SparkTTS model structure.
         /// </summary>
         /// <param name="modelFolder">The subfolder for the model</param>
-        /// <param name="modelFileName">The model file name</param>
-        /// <returns>The full path to the model file</returns>
-        protected static string GetModelPath(string modelFolder, string modelFileName)
+        /// <param name="modelName">The model name</param>
+        protected string GetModelPath(string modelName)
         {
+            if (_config.Precision == Precision.FP16)
+            {
+                modelName = $"{modelName}_fp16";
+            }
+            else if (_config.Precision == Precision.Int8)
+            {
+                modelName = $"{modelName}_int8";
+            }
             return Path.Combine(
-                Application.streamingAssetsPath,
-                SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets,
-                modelFolder,
-                modelFileName);
+                _config.ModelPath,
+                $"{modelName}.onnx");
         }
 
         /// <summary>
@@ -362,49 +450,60 @@ namespace SparkTTS.Models
         /// Asynchronously loads the ONNX model and initializes input/output metadata.
         /// </summary>
         /// <returns>A task containing the loaded InferenceSession</returns>
-        private async Task<InferenceSession> LoadModelAsync()
+        private Task<InferenceSession> LoadModelAsync()
         {
-            return await Task.Run(() =>
+            return new Task<InferenceSession>(() =>
             {
-                if (!File.Exists(_config.ModelPath))
+                string modelPath = GetModelPath(_config.ModelName);
+                if (!File.Exists(modelPath))
                 {
-                    Logger.LogError($"[{_config.ModelName}] Model file not found: {_config.ModelPath}");
-                    throw new FileNotFoundException($"Model file not found: {_config.ModelPath}");
+                    Logger.LogError($"[{_config.ModelName}] Model file not found: {modelPath}");
+                    throw new FileNotFoundException($"Model file not found: {modelPath}");
                 }
                 Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName}");
 
                 try
                 {
                     var options = CreateSessionOptions();
-                    _session = new InferenceSession(_config.ModelPath, options);
+
+                    if (_config.ExecutionProvider == ExecutionProvider.CoreML) 
+                    {
+                        LoadModelWithCoreML(modelPath, options);
+                    }
+                    else
+                    {
+                        _session = new InferenceSession(modelPath, options);
+                    }
                     
                     // Initialize input/output metadata
                     _inputNames = _session.InputMetadata.Keys.ToList();
                     _inputs = new List<NamedOnnxValue>(_inputNames.Count);
                     
                     // Pre-allocate output buffers
-                    _preallocatedOutputs = new List<NamedOnnxValue>();
-                    foreach (var outputMetadata in _session.OutputMetadata)
+                    if (_preAllocateOutputs)
                     {
-                        var outputName = outputMetadata.Key;
-                        var nodeMetadata = outputMetadata.Value;
-                        
-                        if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(float))
+                        _preallocatedOutputs = new List<NamedOnnxValue>();
+                        foreach (var outputMetadata in _session.OutputMetadata)
                         {
-                            CreatePreallocatedTensor<float>(outputName, nodeMetadata.Dimensions);
-                        }
-                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
-                        {
-                            CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
-                        }
-                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
-                        {
-                            CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
+                            var outputName = outputMetadata.Key;
+                            var nodeMetadata = outputMetadata.Value;
+                            
+                            if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(float))
+                            {
+                                CreatePreallocatedTensor<float>(outputName, nodeMetadata.Dimensions);
+                            }
+                            else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
+                            {
+                                CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
+                            }
+                            else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
+                            {
+                                CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
+                            }
                         }
                     }
-                    
                     IsInitialized = true;
-                    Logger.Log($"[{_config.ModelName}] Successfully loaded model: {_config.ModelPath}");
+                    Logger.Log($"[{_config.ModelName}] Successfully loaded model: {modelPath}");
                     return _session;
                 }
                 catch (Exception ex)
@@ -541,6 +640,132 @@ namespace SparkTTS.Models
 
         #endregion
 
+        #region Private Methods - CoreML Support
+
+
+        /// <summary>
+        /// Loads an ONNX model with CoreML acceleration and comprehensive error handling.
+        /// This method configures CoreML provider with caching support, handles cache corruption recovery,
+        /// and provides fallback mechanisms for maximum compatibility across different Apple devices.
+        /// </summary>
+        /// <param name="modelPath">The file path to the ONNX model</param>
+        /// <param name="sessionOptions">The base session options to configure with CoreML provider</param>
+        private void LoadModelWithCoreML(string modelPath, SessionOptions sessionOptions)
+        {
+            try
+            {
+                // Configure CoreML provider with caching support using dictionary API
+                string cacheDirectory = GetCoreMLCacheDirectory();
+                
+                // Ensure cache directory exists and is writable
+                EnsureCacheDirectoryExists(cacheDirectory);
+                
+                var coremlOptions = new Dictionary<string, string>
+                {
+                    ["ModelFormat"] = "MLProgram",
+                    ["MLComputeUnits"] = "CPUAndGPU",
+                    ["RequireStaticInputShapes"] = "0",
+                    ["EnableOnSubgraphs"] = "1",
+                    // Advanced options for optimization
+                    // ["SpecializationStrategy"] = "FastPrediction",
+                    // ["AllowLowPrecisionAccumulationOnGPU"] = "1",
+                    // ["ProfileComputePlan"] = "1"
+                };
+                
+                if (!string.IsNullOrEmpty(cacheDirectory))
+                {
+                    coremlOptions["ModelCacheDirectory"] = cacheDirectory;
+                }
+                
+                sessionOptions.AppendExecutionProvider("CoreML", coremlOptions);
+                Logger.Log($"[ModelUtils] CoreML provider configured with caching (cache: {cacheDirectory})");
+                
+                // Try creating the session - if it fails due to cache corruption, retry
+                try
+                {
+                    _session = new InferenceSession(modelPath, sessionOptions);
+                    Logger.Log($"[ModelUtils] Successfully loaded model with CoreML provider: {modelPath}");
+                }
+                catch (Exception sessionException)
+                {
+                    if (sessionException.Message.Contains("Manifest.json") || 
+                        sessionException.Message.Contains("coreml_cache") ||
+                        sessionException.Message.Contains("manifest does not exist"))
+                    {
+                        Logger.LogWarning($"[ModelUtils] CoreML cache corruption detected. Retrying: {sessionException.Message}");
+                        _session = new InferenceSession(modelPath, sessionOptions);
+                        Logger.Log($"[ModelUtils] Successfully loaded model with CoreML provider after retrying: {modelPath}");
+                    }
+                    else
+                    {
+                        throw; // Re-throw if it's not a cache-related issue
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning($"[ModelUtils] CoreML provider configuration failed: {e.Message}");
+                
+                // Fallback to old CoreML flags approach for compatibility
+                try
+                {
+                    var fallbackOptions = CreateSessionOptions();
+                    fallbackOptions.AppendExecutionProvider_CoreML(
+                        CoreMLFlags.COREML_FLAG_USE_CPU_AND_GPU | 
+                        CoreMLFlags.COREML_FLAG_CREATE_MLPROGRAM |
+                        CoreMLFlags.COREML_FLAG_ENABLE_ON_SUBGRAPH);
+                    
+                    _session = new InferenceSession(modelPath, fallbackOptions);
+                    Logger.Log("[ModelUtils] Using fallback CoreML provider (no caching)");
+                }
+                catch (Exception fallbackException)
+                {
+                    Logger.LogWarning($"[ModelUtils] CoreML fallback also failed: {fallbackException.Message}. Using CPU provider.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the cache directory for CoreML compiled models with automatic path resolution.
+        /// This method determines the best location for CoreML model caching based on configuration
+        /// and platform-specific storage locations for optimal performance and persistence.
+        /// </summary>
+        /// <returns>The full path to the CoreML cache directory</returns>
+        private string GetCoreMLCacheDirectory()
+        {
+            if (!string.IsNullOrEmpty(_config.ModelPath))
+            {
+                return Path.Combine(_config.ModelPath, "coreml_cache");
+            }
+            return Path.Combine(Application.persistentDataPath, "coreml_cache");
+        }
+
+        /// <summary>
+        /// Ensures the CoreML cache directory exists and is writable with proper error handling.
+        /// This method creates the cache directory structure if it doesn't exist and handles
+        /// permission and filesystem errors gracefully.
+        /// </summary>
+        /// <param name="cacheDirectory">The cache directory path to create and validate</param>
+        private void EnsureCacheDirectoryExists(string cacheDirectory)
+        {
+            if (string.IsNullOrEmpty(cacheDirectory))
+                return;
+                
+            try
+            {
+                if (!Directory.Exists(cacheDirectory))
+                {
+                    Directory.CreateDirectory(cacheDirectory);
+                    Logger.Log($"[ModelUtils] Created CoreML cache directory: {cacheDirectory}");
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning($"[ModelUtils] Failed to create cache directory {cacheDirectory}: {e.Message}");
+            }
+        }
+        #endregion
+
         #region Private Types
 
         /// <summary>
@@ -549,8 +774,9 @@ namespace SparkTTS.Models
         private class ModelConfig
         {
             public string ModelName { get; set; }
-            public string ModelFolder { get; set; }
             public string ModelPath { get; set; }
+            public Precision Precision { get; set; } = Precision.FP32;
+            public ExecutionProvider ExecutionProvider { get; set; } = ExecutionProvider.CPU;
         }
 
         /// <summary>
@@ -589,6 +815,9 @@ namespace SparkTTS.Models
                     _session?.Dispose();
                     _inputs?.Clear();
                     _preallocatedOutputs?.Clear();
+                    IsInitialized = false;
+                    _loadTask?.Dispose();
+                    _loadTask = null;
                     
                     Logger.Log($"[{_config?.ModelName ?? "ORTModel"}] Disposed successfully");
                 }

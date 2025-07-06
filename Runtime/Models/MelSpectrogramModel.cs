@@ -16,9 +16,6 @@ namespace SparkTTS.Models
     /// </summary>
     internal class MelSpectrogramModel : ORTModel
     {
-        private const string InputName = "raw_waveform_with_channel"; 
-        private const string OutputName = "mel_spectrogram";
-
         public int OutputNumMelBands { get; private set; } = 0;
         public const int TargetNumMelBandsForSpeakerEncoder = 128;
 
@@ -27,12 +24,10 @@ namespace SparkTTS.Models
         /// </summary>
         public MelSpectrogramModel() 
             : base(SparkTTSModelPaths.MelSpectrogramModelName, 
-                   SparkTTSModelPaths.MelSpectrogramFolder)
+                   SparkTTSModelPaths.MelSpectrogramFolder,
+                   preAllocateOutputs: true)
         {
-            Logger.Log("[MelSpectrogramModel] Initialized successfully");
-            
-            // Initialize the output mel bands determination asynchronously
-            _ = InitializeOutputMelBandsAsync();
+            Logger.LogVerbose("[MelSpectrogramModel] Initialized successfully");
         }
 
         /// <summary>
@@ -42,6 +37,7 @@ namespace SparkTTS.Models
         {
             try
             {
+                await _loadTask;
                 var outputs = await GetPreallocatedOutputs();
                 var firstOutput = outputs.FirstOrDefault();
                 if (firstOutput?.Value is DenseTensor<float> tensor)
@@ -50,7 +46,7 @@ namespace SparkTTS.Models
                     if (dimensions.Length == 3)
                     {
                         OutputNumMelBands = dimensions[1];
-                        Logger.Log($"[MelSpectrogramModel] Determined OutputNumMelBands: {OutputNumMelBands}");
+                        Logger.LogVerbose($"[MelSpectrogramModel] Determined OutputNumMelBands: {OutputNumMelBands}");
                     }
                     else
                     {
@@ -62,6 +58,17 @@ namespace SparkTTS.Models
             {
                 Logger.LogError($"[MelSpectrogramModel] Failed to determine mel bands: {ex.Message}");
             }
+        }
+
+        public async Task<(float[] melData, int[] melShape)?> GenerateProcessedMelSpectrogramAsync(float[] monoAudioSamples)
+        {
+            (float[] melData, int[] melShape)? rawMelTuple = await GenerateMelSpectrogramAsync(monoAudioSamples);
+            if (!rawMelTuple.HasValue) { Logger.LogError("[MelSpectrogramModel] Failed to generate raw mel spectrogram."); return (null, null); }
+
+            (float[] processedMelData, int[] processedMelShape)? processedMelTuple = ProcessMelForSpeakerEncoder(rawMelTuple.Value);
+            if (!processedMelTuple.HasValue) { Logger.LogError("[MelSpectrogramModel] Failed to process mel spectrogram."); return (null, null); }
+
+            return processedMelTuple;
         }
 
         /// <summary>
@@ -87,6 +94,7 @@ namespace SparkTTS.Models
 
             try
             {
+                await InitializeOutputMelBandsAsync();
                 // Use the new LoadInput/Run pattern
                 var outputs = await Run(inputs);
                 
@@ -117,7 +125,7 @@ namespace SparkTTS.Models
                     Logger.LogWarning($"[MelSpectrogramModel] Model outputted {melShape[1]} bands, but determined OutputNumMelBands was {OutputNumMelBands}");
                 }
                 
-                Logger.Log($"[MelSpectrogramModel] Successfully generated mel spectrogram with shape: [{string.Join(",", melShape)}]");
+                Logger.LogVerbose($"[MelSpectrogramModel] Successfully generated mel spectrogram with shape: [{string.Join(",", melShape)}]");
                 
                 return (melData, melShape);
             }
@@ -177,7 +185,7 @@ namespace SparkTTS.Models
                 
                 var processedShape = new int[] { 1, numFrames, bandsToProcess };
                 
-                Logger.Log($"[MelSpectrogramModel] Processed mel spectrogram: {rawMelShape[1]} -> {bandsToProcess} bands, " +
+                Logger.LogVerbose($"[MelSpectrogramModel] Processed mel spectrogram: {rawMelShape[1]} -> {bandsToProcess} bands, " +
                           $"{numFrames} frames");
                 
                 return (permutedMelData, processedShape);

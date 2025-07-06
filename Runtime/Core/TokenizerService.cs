@@ -263,7 +263,7 @@ namespace SparkTTS.Core
 
             string combinedPatternString = $"({string.Join("|", allSpecialPatterns)})";
             _combinedSpecialTokenRegex = new Regex(combinedPatternString);
-            Logger.Log($"[TokenizerService Static Constructor] Combined Special Token Pattern for splitting: {combinedPatternString}");
+            Logger.LogVerbose($"[TokenizerService Static Constructor] Combined Special Token Pattern for splitting: {combinedPatternString}");
         }
 
         // ByteLevel character mapping (simplified, extend as needed)
@@ -335,7 +335,7 @@ namespace SparkTTS.Core
 
             // Augment _vocab with added_tokens
             // Giving precedence to added_tokens if there's a conflict, or simply adding if not present.
-            Logger.Log($"[TokenizerService Constructor] Processing {_config.AddedTokens.Count} added_tokens.");
+            Logger.LogVerbose($"[TokenizerService Constructor] Processing {_config.AddedTokens.Count} added_tokens.");
             foreach (var addedToken in _config.AddedTokens)
             {
                 _vocab[addedToken.Content] = addedToken.Id; // Add or overwrite
@@ -344,7 +344,7 @@ namespace SparkTTS.Core
             // --- TEMP DEBUG ---
             if (_vocab.TryGetValue("<|task_controllable_tts|>", out int controlId))
             {
-                Logger.Log($"[TokenizerService Constructor DEBUG] '<|task_controllable_tts|>' IS in _vocab. ID: {controlId} (Expected: 165143)");
+                Logger.LogVerbose($"[TokenizerService Constructor DEBUG] '<|task_controllable_tts|>' IS in _vocab. ID: {controlId} (Expected: 165143)");
             }
             else
             {
@@ -352,7 +352,7 @@ namespace SparkTTS.Core
             }
             if (_vocab.TryGetValue("<|start_content|>", out int startContentId))
             {
-                Logger.Log($"[TokenizerService Constructor DEBUG] '<|start_content|>' IS in _vocab. ID: {startContentId} (Expected: 165146)");
+                Logger.LogVerbose($"[TokenizerService Constructor DEBUG] '<|start_content|>' IS in _vocab. ID: {startContentId} (Expected: 165146)");
             }
             else
             {
@@ -413,35 +413,35 @@ namespace SparkTTS.Core
         public TokenizationOutput Encode(string text, bool addSpecialTokens = true)
         {
             if (string.IsNullOrEmpty(text)) return new TokenizationOutput();
-            Logger.Log($"[TokenizerService.Encode] Input text: '{text}'");
+            Logger.LogVerbose($"[TokenizerService.Encode] Input text: '{text}'");
 
             // 1. Normalization
             string normalizedText = Normalize(text);
-            Logger.Log($"[TokenizerService.Encode] Normalized text: '{normalizedText}'");
+            Logger.LogVerbose($"[TokenizerService.Encode] Normalized text: '{normalizedText}'");
 
             // 2. Pre-tokenization
             List<string> preTokenized = PreTokenize(normalizedText);
-            Logger.Log($"[TokenizerService.Encode] PreTokenized output: [{string.Join(", ", preTokenized.Select(s => $"'{s}'"))}]");
+            Logger.LogVerbose($"[TokenizerService.Encode] PreTokenized output: [{string.Join(", ", preTokenized.Select(s => $"'{s}'"))}]");
 
             List<int> inputIds = new();
 
             // 3. Model-specific tokenization (BPE)
-            Logger.Log($"[TokenizerService.Encode] Applying BPE and Vocab Lookup:");
+            Logger.LogVerbose($"[TokenizerService.Encode] Applying BPE and Vocab Lookup:");
             foreach (string word in preTokenized)
             {
                 if (string.IsNullOrEmpty(word)) continue;
-                Logger.Log($"[TokenizerService.Encode]   Processing word: '{word}'");
+                Logger.LogVerbose($"[TokenizerService.Encode]   Processing word: '{word}'");
 
                 if (_config.Model.Type == "BPE")
                 {
                     List<string> bpeTokens = ApplyBPE(word);
-                    Logger.Log($"[TokenizerService.Encode]     BPE tokens for '{word}': [{string.Join(", ", bpeTokens.Select(s => $"'{s}'"))}]");
+                    Logger.LogVerbose($"[TokenizerService.Encode]     BPE tokens for '{word}': [{string.Join(", ", bpeTokens.Select(s => $"'{s}'"))}]");
                     foreach (string token in bpeTokens)
                     {
                         bool found = _vocab.TryGetValue(token, out int id);
                         int finalId = found ? id : _unkTokenId;
                         inputIds.Add(finalId);
-                        Logger.Log($"[TokenizerService.Encode]       Token: '{token}' -> ID: {finalId}" + (found ? "" : " (UNK)"));
+                        Logger.LogVerbose($"[TokenizerService.Encode]       Token: '{token}' -> ID: {finalId}" + (found ? "" : " (UNK)"));
                     }
                 }
                 else
@@ -451,7 +451,7 @@ namespace SparkTTS.Core
                     bool found = _vocab.TryGetValue(word, out int id);
                     int finalId = found ? id : _unkTokenId;
                     inputIds.Add(finalId);
-                    Logger.Log($"[TokenizerService.Encode]     Token (non-BPE): '{word}' -> ID: {finalId}" + (found ? "" : " (UNK)"));
+                    Logger.LogVerbose($"[TokenizerService.Encode]     Token (non-BPE): '{word}' -> ID: {finalId}" + (found ? "" : " (UNK)"));
                 }
             }
             
@@ -469,8 +469,8 @@ namespace SparkTTS.Core
             output.InputIds.AddRange(inputIds);
             output.AttentionMask.AddRange(Enumerable.Repeat(1, inputIds.Count)); // Simple attention mask (all 1s)
             
-            Logger.Log($"[TokenizerService.Encode] Final Input IDs: [{string.Join(", ", output.InputIds)}]");
-            Logger.Log($"[TokenizerService.Encode] Final Attention Mask: [{string.Join(", ", output.AttentionMask)}]");
+            Logger.LogVerbose($"[TokenizerService.Encode] Final Input IDs: [{string.Join(", ", output.InputIds)}]");
+            Logger.LogVerbose($"[TokenizerService.Encode] Final Attention Mask: [{string.Join(", ", output.AttentionMask)}]");
             return output;
         }
 
@@ -485,7 +485,7 @@ namespace SparkTTS.Core
                                              IEnumerable<int> globalSpeakerNumericIDs,
                                              IEnumerable<long> acousticSemanticTokensFromRefAudio = null)
         {
-            Logger.Log($"[TokenizerService.EncodeForLLM] Encoding for LLM. Text: '{text}'");
+            Logger.LogVerbose($"[TokenizerService.EncodeForLLM] Encoding for LLM. Text: '{text}'");
 
             StringBuilder sb = new();
 
@@ -507,7 +507,7 @@ namespace SparkTTS.Core
             // Add acoustic semantic tokens from reference audio, if provided
             if (acousticSemanticTokensFromRefAudio != null && acousticSemanticTokensFromRefAudio.Any())
             {
-                Logger.Log($"[TokenizerService.EncodeForLLM] Adding {acousticSemanticTokensFromRefAudio.Count()} acoustic semantic tokens from reference audio.");
+                Logger.LogVerbose($"[TokenizerService.EncodeForLLM] Adding {acousticSemanticTokensFromRefAudio.Count()} acoustic semantic tokens from reference audio.");
                 sb.Append("<|start_semantic_token|>");
                 foreach (long id in acousticSemanticTokensFromRefAudio)
                 {
@@ -518,7 +518,7 @@ namespace SparkTTS.Core
             }
 
             string inputPromptString = sb.ToString();
-            Logger.Log($"[TokenizerService.EncodeForLLM] ------- Constructed Input Prompt String START -------\n{inputPromptString}\n------- Constructed Input Prompt String END -------");
+            Logger.LogVerbose($"[TokenizerService.EncodeForLLM] ------- Constructed Input Prompt String START -------\n{inputPromptString}\n------- Constructed Input Prompt String END -------");
 
             // Now, tokenize this entire constructed string using the base Encode method logic
             // which handles normalization, pre-tokenization, BPE, and vocab lookup.
@@ -528,29 +528,29 @@ namespace SparkTTS.Core
             if (string.IsNullOrEmpty(inputPromptString)) return new TokenizationOutput();
 
             string normalizedText = Normalize(inputPromptString);
-            Logger.Log($"[TokenizerService.EncodeForLLM] Normalized prompt: '{normalizedText}'");
+            Logger.LogVerbose($"[TokenizerService.EncodeForLLM] Normalized prompt: '{normalizedText}'");
 
             List<string> preTokenized = PreTokenize(normalizedText);
-            Logger.Log($"[TokenizerService.EncodeForLLM] PreTokenized prompt: [{string.Join(", ", preTokenized.Select(s => $"'{s}'"))}]");
+            Logger.LogVerbose($"[TokenizerService.EncodeForLLM] PreTokenized prompt: [{string.Join(", ", preTokenized.Select(s => $"'{s}'"))}]");
 
             List<int> finalInputIds = new();
-            Logger.Log($"[TokenizerService.EncodeForLLM] Applying BPE and Vocab Lookup to constructed prompt:");
+            Logger.LogVerbose($"[TokenizerService.EncodeForLLM] Applying BPE and Vocab Lookup to constructed prompt:");
 
             foreach (string word in preTokenized)
             {
                 if (string.IsNullOrEmpty(word)) continue;
-                Logger.Log($"[TokenizerService.EncodeForLLM]   Processing word from prompt: '{word}'");
+                Logger.LogVerbose($"[TokenizerService.EncodeForLLM]   Processing word from prompt: '{word}'");
 
                 if (_config.Model.Type == "BPE")
                 {
                     List<string> bpeTokens = ApplyBPE(word);
-                    Logger.Log($"[TokenizerService.EncodeForLLM]     BPE tokens for '{word}': [{string.Join(", ", bpeTokens.Select(s => $"'{s}'"))}]");
+                    Logger.LogVerbose($"[TokenizerService.EncodeForLLM]     BPE tokens for '{word}': [{string.Join(", ", bpeTokens.Select(s => $"'{s}'"))}]");
                     foreach (string token in bpeTokens)
                     {
                         bool found = _vocab.TryGetValue(token, out int id);
                         int finalId = found ? id : _unkTokenId;
                         finalInputIds.Add(finalId);
-                        Logger.Log($"[TokenizerService.EncodeForLLM]       Token: '{token}' -> ID: {finalId}" + (found ? "" : " (UNK)"));
+                        Logger.LogVerbose($"[TokenizerService.EncodeForLLM]       Token: '{token}' -> ID: {finalId}" + (found ? "" : " (UNK)"));
                     }
                 }
                 else
@@ -559,7 +559,7 @@ namespace SparkTTS.Core
                     bool found = _vocab.TryGetValue(word, out int id);
                     int finalId = found ? id : _unkTokenId;
                     finalInputIds.Add(finalId);
-                    Logger.Log($"[TokenizerService.EncodeForLLM]     Token (non-BPE): '{word}' -> ID: {finalId}" + (found ? "" : " (UNK)"));
+                    Logger.LogVerbose($"[TokenizerService.EncodeForLLM]     Token (non-BPE): '{word}' -> ID: {finalId}" + (found ? "" : " (UNK)"));
                 }
             }
             // --- End of replicated Encode logic ---
@@ -568,9 +568,9 @@ namespace SparkTTS.Core
             output.InputIds.AddRange(finalInputIds);
             output.AttentionMask.AddRange(Enumerable.Repeat(1, finalInputIds.Count));
 
-            Logger.Log($"[TokenizerService.EncodeForLLM] Final Combined Input IDs: [{string.Join(", ", output.InputIds)}]");
-            Logger.Log($"[TokenizerService.EncodeForLLM] Final Combined Attention Mask: [{string.Join(", ", output.AttentionMask)}]");
-            Logger.Log($"[TokenizerService.EncodeForLLM] Final Combined Output: {output}");
+            Logger.LogVerbose($"[TokenizerService.EncodeForLLM] Final Combined Input IDs: [{string.Join(", ", output.InputIds)}]");
+            Logger.LogVerbose($"[TokenizerService.EncodeForLLM] Final Combined Attention Mask: [{string.Join(", ", output.AttentionMask)}]");
+            Logger.LogVerbose($"[TokenizerService.EncodeForLLM] Final Combined Output: {output}");
             
             return output;
         }
@@ -597,11 +597,11 @@ namespace SparkTTS.Core
 
         private List<string> PreTokenize(string text)
         {
-            Logger.Log($"[TokenizerService.PreTokenize] Input text: '{text}'");
+            Logger.LogVerbose($"[TokenizerService.PreTokenize] Input text: '{text}'");
             if (string.IsNullOrEmpty(text)) return new List<string>();
 
             // Use the pre-built combined regex for splitting            
-            Logger.Log($"[TokenizerService.PreTokenize] Using Combined Special Token Pattern: {_combinedSpecialTokenRegex.ToString()}");
+            Logger.LogVerbose($"[TokenizerService.PreTokenize] Using Combined Special Token Pattern: {_combinedSpecialTokenRegex.ToString()}");
 
             List<string> initialSegments = new();
             int lastIndex = 0;
@@ -621,7 +621,7 @@ namespace SparkTTS.Core
                 initialSegments.Add(text.Substring(lastIndex));
             }
             
-            Logger.Log($"[TokenizerService.PreTokenize] Initial Segments (after splitting by ALL special patterns): [{string.Join(", ", initialSegments.Select(s => $"'{s}'"))}]");
+            Logger.LogVerbose($"[TokenizerService.PreTokenize] Initial Segments (after splitting by ALL special patterns): [{string.Join(", ", initialSegments.Select(s => $"'{s}'"))}]");
 
             List<string> finalPreTokens = new List<string>();
 
@@ -635,7 +635,7 @@ namespace SparkTTS.Core
 
                 if (isSegmentSpecialOrPatternMatch)
                 {
-                    Logger.Log($"[TokenizerService.PreTokenize] Segment '{segment}' IS special/pattern. It should bypass main 'Split' pretokenizer if configured.");
+                    Logger.LogVerbose($"[TokenizerService.PreTokenize] Segment '{segment}' IS special/pattern. It should bypass main 'Split' pretokenizer if configured.");
                     // Special tokens should generally NOT be processed by the main "Split" pretokenizer from config.
                     // They might still be processed by ByteLevel if it's later in the sequence.
                     // We pass it through the pretokenizer sequence defined in config, but ApplySinglePretokenizer
@@ -653,12 +653,12 @@ namespace SparkTTS.Core
                                 // Allow other types like "ByteLevel" to process it.
                                 if (ptConfig.Type == "Split" && _combinedSpecialTokenRegex.IsMatch(partToProcess)) 
                                 {
-                                     Logger.Log($"[TokenizerService.PreTokenize]   Skipping configured 'Split' for already isolated special part '{partToProcess}'");
+                                     Logger.LogVerbose($"[TokenizerService.PreTokenize]   Skipping configured 'Split' for already isolated special part '{partToProcess}'");
                                      nextParts.Add(partToProcess); 
                                 }
                                 else 
                                 {
-                                    Logger.Log($"[TokenizerService.PreTokenize]   Applying PT '{ptConfig.Type}' to (potentially special) part '{partToProcess}'");
+                                    Logger.LogVerbose($"[TokenizerService.PreTokenize]   Applying PT '{ptConfig.Type}' to (potentially special) part '{partToProcess}'");
                                     nextParts.AddRange(ApplySinglePreTokenizer(partToProcess, ptConfig));
                                 }
                             }
@@ -669,12 +669,12 @@ namespace SparkTTS.Core
                     {
                          if (_config.PreTokenizer.Type == "Split" && isSegmentSpecialOrPatternMatch)
                          {
-                            Logger.Log($"[TokenizerService.PreTokenize]   Skipping single 'Split' PT for special segment '{segment}'");
+                            Logger.LogVerbose($"[TokenizerService.PreTokenize]   Skipping single 'Split' PT for special segment '{segment}'");
                             processedSpecialSegment = new List<string> { segment };
                          }
                          else
                          {
-                            Logger.Log($"[TokenizerService.PreTokenize]   Applying single PT '{_config.PreTokenizer.Type}' to special segment '{segment}'");
+                            Logger.LogVerbose($"[TokenizerService.PreTokenize]   Applying single PT '{_config.PreTokenizer.Type}' to special segment '{segment}'");
                             PreTokenizerConfig singlePtConfig = new PreTokenizerConfig
                             {
                                 Type = _config.PreTokenizer.Type,
@@ -693,7 +693,7 @@ namespace SparkTTS.Core
                 }
                 else // Segment is NOT special (e.g., "Hello world" or other interstitial text)
                 {
-                    Logger.Log($"[TokenizerService.PreTokenize] Segment '{segment}' is NOT special. Processing with full pretokenizer sequence from config.");
+                    Logger.LogVerbose($"[TokenizerService.PreTokenize] Segment '{segment}' is NOT special. Processing with full pretokenizer sequence from config.");
                     List<string> currentNormalSegmentParts = new List<string> { segment };
                      if (_config.PreTokenizer?.Type == "Sequence" && _config.PreTokenizer.PreTokenizers != null)
                     {
@@ -702,7 +702,7 @@ namespace SparkTTS.Core
                             List<string> nextParts = new List<string>();
                             foreach(string partToProcess in currentNormalSegmentParts)
                             {
-                                Logger.Log($"[TokenizerService.PreTokenize]   Applying PT '{ptConfig.Type}' to part '{partToProcess}' of non-special segment '{segment}'");
+                                Logger.LogVerbose($"[TokenizerService.PreTokenize]   Applying PT '{ptConfig.Type}' to part '{partToProcess}' of non-special segment '{segment}'");
                                 nextParts.AddRange(ApplySinglePreTokenizer(partToProcess, ptConfig));
                             }
                             currentNormalSegmentParts = nextParts;
@@ -710,7 +710,7 @@ namespace SparkTTS.Core
                     }
                     else if (_config.PreTokenizer != null) // Single pretokenizer in config
                     {
-                        Logger.Log($"[TokenizerService.PreTokenize]   Applying single PT '{_config.PreTokenizer.Type}' to non-special segment '{segment}'");
+                        Logger.LogVerbose($"[TokenizerService.PreTokenize]   Applying single PT '{_config.PreTokenizer.Type}' to non-special segment '{segment}'");
                         PreTokenizerConfig singlePtConfig = new PreTokenizerConfig
                         {
                             Type = _config.PreTokenizer.Type,
@@ -728,7 +728,7 @@ namespace SparkTTS.Core
                 }
             }
             
-            Logger.Log($"[TokenizerService.PreTokenize] Final pre-tokens before returning: [{string.Join(", ", finalPreTokens.Select(s => $"'{s}'"))}]");
+            Logger.LogVerbose($"[TokenizerService.PreTokenize] Final pre-tokens before returning: [{string.Join(", ", finalPreTokens.Select(s => $"'{s}'"))}]");
             return finalPreTokens.Where(s => !string.IsNullOrEmpty(s)).ToList();
         }
 
@@ -736,7 +736,7 @@ namespace SparkTTS.Core
         private List<string> ApplySinglePreTokenizer(string textSegment, PreTokenizerConfig ptConfig) // Assuming PreTokenizerConfig is the type in the list
         {
             // Minor log added here for entry, more detailed logs are in PreTokenize which calls this
-            // Debug.Log($"[ApplySinglePreTokenizer] Applying '{ptConfig?.Type}' to '{textSegment}'"); 
+            // Debug.LogVerbose($"[ApplySinglePreTokenizer] Applying '{ptConfig?.Type}' to '{textSegment}'"); 
             if (ptConfig == null || string.IsNullOrEmpty(ptConfig.Type) || string.IsNullOrEmpty(textSegment)) 
             {
                 return string.IsNullOrEmpty(textSegment) ? new List<string>() : new List<string> {textSegment};
@@ -765,7 +765,7 @@ namespace SparkTTS.Core
                 if (ptConfig.AddPrefixSpace == true && !string.IsNullOrEmpty(textSegment) && textSegment[0] != ' ' && textSegment[0] != 'Ġ')
                 {
                     segmentToProcess = " " + textSegment;
-                    Logger.Log($"[TokenizerService.ApplySinglePreTokenizer ByteLevel] Prepended space due to AddPrefixSpace=true. Original: '{textSegment}', Processing: '{segmentToProcess}'");
+                    Logger.LogVerbose($"[TokenizerService.ApplySinglePreTokenizer ByteLevel] Prepended space due to AddPrefixSpace=true. Original: '{textSegment}', Processing: '{segmentToProcess}'");
                 }
 
                 byte[] bytes = Encoding.UTF8.GetBytes(segmentToProcess);
@@ -798,7 +798,7 @@ namespace SparkTTS.Core
             // return it directly without trying to BPE-process its characters.
             if (_vocab.ContainsKey(word))
             {
-                Logger.Log($"[TokenizerService.ApplyBPE] Word '{word}' found directly in vocab. Returning as single token.");
+                Logger.LogVerbose($"[TokenizerService.ApplyBPE] Word '{word}' found directly in vocab. Returning as single token.");
                 return new List<string> { word };
             }
 
@@ -849,7 +849,7 @@ namespace SparkTTS.Core
         public string Decode(IEnumerable<int> ids, bool skipSpecialTokens = true)
         {
             if (ids == null) return string.Empty;
-            Logger.Log($"[TokenizerService.Decode] Input IDs: [{string.Join(", ", ids)}], skipSpecialTokens: {skipSpecialTokens}");
+            Logger.LogVerbose($"[TokenizerService.Decode] Input IDs: [{string.Join(", ", ids)}], skipSpecialTokens: {skipSpecialTokens}");
 
             StringBuilder rawTokenString = new StringBuilder();
             foreach (int id in ids)
@@ -864,7 +864,7 @@ namespace SparkTTS.Core
 
                     if (skipSpecialTokens && isSpecial)
                     {
-                        Logger.Log($"[TokenizerService.Decode] Skipping special token: '{tokenString}' (ID: {id})");
+                        Logger.LogVerbose($"[TokenizerService.Decode] Skipping special token: '{tokenString}' (ID: {id})");
                         continue;
                     }
                     rawTokenString.Append(tokenString);
@@ -878,7 +878,7 @@ namespace SparkTTS.Core
             }
             
             string concatenatedString = rawTokenString.ToString();
-            Logger.Log($"[TokenizerService.Decode] Concatenated token string (before ByteLevel): '{concatenatedString}'");
+            Logger.LogVerbose($"[TokenizerService.Decode] Concatenated token string (before ByteLevel): '{concatenatedString}'");
 
             // ByteLevel decoding part (similar to HF tokenizers Python code)
             // Converts special ByteLevel characters (like 'Ġ') back to bytes, then UTF-8 decodes.
@@ -901,18 +901,8 @@ namespace SparkTTS.Core
                 }
             }
             string decodedText = Encoding.UTF8.GetString(byteList.ToArray());
-            Logger.Log($"[TokenizerService.Decode] Final decoded text: '{decodedText}'");
+            Logger.LogVerbose($"[TokenizerService.Decode] Final decoded text: '{decodedText}'");
             return decodedText;
-        }
-
-        // TODO: Implement Decode method to convert IDs back to string
-
-        // Added compatibility method for Python alignment
-        // This is a simpler version matching the Python API
-        public TokenizationOutput Encode(string text)
-        {
-            // This wraps the existing Encode method with default parameters
-            return Encode(text, addSpecialTokens: true);
         }
     }
 } // End of namespace SparkTTS
