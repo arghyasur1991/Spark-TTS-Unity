@@ -25,7 +25,7 @@ namespace SparkTTS.Models
         private static readonly ThreadLocal<Random> _threadLocalRandom = 
             new(() => new Random(Guid.NewGuid().GetHashCode()));
 
-        public static bool LogTiming = true;
+        public static bool LogTiming = false;
 
         // Model input/output names, populated by InspectAndPopulateNames
         private string _inputIDsName;

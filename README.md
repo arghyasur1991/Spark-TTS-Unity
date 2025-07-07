@@ -84,6 +84,7 @@ Some dependencies require additional scoped registry configuration. Add the foll
 ```csharp
 using UnityEngine;
 using SparkTTS;
+using SparkTTS.Utils;
 using System.Threading.Tasks;
 
 public class TTSExample : MonoBehaviour
@@ -93,8 +94,8 @@ public class TTSExample : MonoBehaviour
 
     async void Start()
     {
-        // Initialize the TTS system (optional - sets log levels)
-        CharacterVoiceFactory.Initialize(DebugLogger.LogLevel.Warning);
+        // Initialize the TTS system (optional - sets log levels and optimal memory usage mode)
+        CharacterVoiceFactory.Initialize(LogLevel.Warning, true); // Set OptimalMemoryUsage to true for IOS
         
         // Get reference to AudioSource
         audioSource = GetComponent<AudioSource>();
@@ -299,8 +300,8 @@ To use the demo:
 ## Requirements
 
 - Unity 6000.0.46f1 or newer
-- Supported platforms: Windows, macOS
-- Minimum 32GB RAM for runtime operation
+- Supported platforms: macOS (Tested on Mac M4 Max), iOS (Tested on iPhone 14 Pro), Windows (Not tested)
+- Minimum 16GB RAM for runtime operation
 - Storage space for TTS models (~3GB)
 
 ## License
