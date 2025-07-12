@@ -230,7 +230,7 @@ namespace SparkTTS.Models
             
             try
             {
-                _session.Run(_inputs, _preallocatedOutputs, runOptions);
+                await Task.Run(() => _session.Run(_inputs, _preallocatedOutputs, runOptions));
             }
             catch (Exception ex)
             {
@@ -285,7 +285,7 @@ namespace SparkTTS.Models
             IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
             try
             {
-                results = _session.Run(_inputs, _session.OutputNames, runOptions);
+                results = await Task.Run(() => _session.Run(_inputs, _session.OutputNames, runOptions));
             }
             catch (Exception ex)
             {
@@ -409,18 +409,8 @@ namespace SparkTTS.Models
         {
             var options = new SessionOptions
             {
-                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-                ExecutionMode = ExecutionMode.ORT_PARALLEL,
-                EnableMemoryPattern = true,
-                EnableCpuMemArena = true,
-                InterOpNumThreads = Environment.ProcessorCount,
-                IntraOpNumThreads = Environment.ProcessorCount,
                 LogSeverityLevel = _ortLogLevel
             };
-
-            // Advanced performance optimizations
-            options.AddSessionConfigEntry("session.disable_prepacking", "0");
-            options.AddSessionConfigEntry("session.use_env_allocators", "1");
             
             return options;
         }

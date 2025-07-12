@@ -97,7 +97,7 @@ namespace SparkTTS.Models
             {
                 LogSeverityLevel = OrtLogLevel
             };
-
+            LogTiming = Logger.LogLevel == LogLevel.VERBOSE;
             Logger.LogVerbose("[LLMModel] Initialized successfully");
         }
 
@@ -200,13 +200,6 @@ namespace SparkTTS.Models
 
         /// <summary>
         /// Asynchronously generates semantic tokens from tokenized input.
-        // Note: The complex InspectAndPopulateNames method has been simplified
-        // in favor of the new ORTModel pattern. The LLM functionality remains intact
-        // but uses the async initialization approach.
-
-        /// <summary>
-        /// Asynchronously generates semantic tokens from tokenized input.
-        /// This is the main generation method that should be used instead of the old synchronous version.
         /// </summary>
         /// <param name="llmInitialInput">The tokenized input to process</param>
         /// <param name="maxNewTokens">Maximum number of new tokens to generate</param>
@@ -265,7 +258,7 @@ namespace SparkTTS.Models
                 }
                 
                 // Generate inputs for initial pass
-                var initialInputs = await PrepareInitialInputsAsync(
+                var initialInputs = PrepareInitialInputs(
                     inputIdsData, 
                     llmInitialInput.AttentionMask?.ToArray(), 
                     batchSize);
@@ -304,10 +297,10 @@ namespace SparkTTS.Models
                 for (int step = 0; step < maxNewTokens - 1; ++step) // -1 because one token already generated
                 {
                     Logger.LogVerbose($"--- [LLMModel.GenTokens Loop] Step {step} --- (Generating token {newlyGeneratedTokenIds.Count + 1})");
-                    int currentTokenIdForInput = newlyGeneratedTokenIds[newlyGeneratedTokenIds.Count - 1];
+                    int currentTokenIdForInput = newlyGeneratedTokenIds[^1];
                     
                     // Generate inputs for single token step
-                    var stepInputs = await PrepareStepInputsAsync(
+                    var stepInputs = PrepareStepInputs(
                         currentTokenIdForInput, 
                         kvCache, 
                         batchSize);
@@ -508,18 +501,6 @@ namespace SparkTTS.Models
             _prepareStepInputsTimer.AddTiming(prepareStepInputsStartTime, prepareStepInputsEndTime);
 
             return inputsForCurrentStep;
-        }
-
-        // Async wrapper for PrepareInitialInputs
-        private async Task<List<NamedOnnxValue>> PrepareInitialInputsAsync(long[] inputIdsData, int[] attentionMaskData, int batchSize)
-        {
-            return await Task.Run(() => PrepareInitialInputs(inputIdsData, attentionMaskData, batchSize));
-        }
-
-        // Async wrapper for PrepareStepInputs  
-        private async Task<List<NamedOnnxValue>> PrepareStepInputsAsync(int tokenId, List<DenseTensor<float>> kvCache, int batchSize)
-        {
-            return await Task.Run(() => PrepareStepInputs(tokenId, kvCache, batchSize));
         }
 
         // Run ONNX inference with prepared inputs using the new ORTModel pattern
