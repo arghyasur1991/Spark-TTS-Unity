@@ -804,6 +804,7 @@ namespace SparkTTS.Models
                     IsInitialized = false;
                     _loadTask?.Dispose();
                     _loadTask = null;
+                    _session = null;
                     
                     Logger.Log($"[{_config?.ModelName ?? "ORTModel"}] Disposed successfully");
                 }
