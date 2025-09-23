@@ -104,7 +104,7 @@ namespace SparkTTS.Core
         private const string START_GLOBAL_TOKEN = "<|start_global_token|>";
         private const string START_SEMANTIC_TOKEN = "<|start_semantic_token|>";
 
-        public SparkTTS(TTSInferenceConfig config = null)
+        public SparkTTS(ExecutionProvider executionProvider = ExecutionProvider.CPU, TTSInferenceConfig config = null)
         {
             try
             {
@@ -141,12 +141,12 @@ namespace SparkTTS.Core
 
                 // --- Initialize ONNX Models ---
                 Logger.LogVerbose("[SparkTTS] Initializing ONNX Models...");
-                _melModel = new MelSpectrogramModel();
-                _speakerEncoderModel = new SpeakerEncoderModel();
-                _llmModel = new LLMModel(tokenizerDef); // Pass tokenizer definition
-                _vocoderModel = new VocoderModel();
-                _wav2Vec2Model = new Wav2Vec2Model();
-                _encoderQuantizerModel = new BiCodecEncoderQuantizerModel();
+                _melModel = new MelSpectrogramModel(executionProvider);
+                _speakerEncoderModel = new SpeakerEncoderModel(executionProvider);
+                _llmModel = new LLMModel(tokenizerDef, executionProvider); // Pass tokenizer definition
+                _vocoderModel = new VocoderModel(executionProvider);
+                _wav2Vec2Model = new Wav2Vec2Model(executionProvider);
+                _encoderQuantizerModel = new BiCodecEncoderQuantizerModel(executionProvider);
                 Logger.LogVerbose("[SparkTTS] ONNX Models Initialized.");
 
                 _audioTokenizer = new SparkTTSAudioTokenizer(
