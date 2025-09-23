@@ -22,10 +22,11 @@ namespace SparkTTS.Models
         /// <summary>
         /// Initializes a new instance of the MelSpectrogramModel class.
         /// </summary>
-        public MelSpectrogramModel() 
+        public MelSpectrogramModel(ExecutionProvider executionProvider) 
             : base(SparkTTSModelPaths.MelSpectrogramModelName, 
                    SparkTTSModelPaths.MelSpectrogramFolder,
-                   preAllocateOutputs: true)
+                   preAllocateOutputs: true,
+                   executionProvider: executionProvider)
         {
             Logger.LogVerbose("[MelSpectrogramModel] Initialized successfully");
         }

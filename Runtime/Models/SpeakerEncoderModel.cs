@@ -19,9 +19,10 @@ namespace SparkTTS.Models
         /// <summary>
         /// Initializes a new instance of the SpeakerEncoderModel class.
         /// </summary>
-        public SpeakerEncoderModel() 
+        public SpeakerEncoderModel(ExecutionProvider executionProvider) 
             : base(SparkTTSModelPaths.SpeakerEncoderModelName, 
-                   SparkTTSModelPaths.SpeakerEncoderFolder)
+                   SparkTTSModelPaths.SpeakerEncoderFolder,
+                   executionProvider: executionProvider)
         {
             Logger.LogVerbose("[SpeakerEncoderModel] Initialized successfully");
         }
