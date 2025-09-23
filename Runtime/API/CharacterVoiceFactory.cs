@@ -19,14 +19,14 @@ namespace SparkTTS
         private SparkTTS _sparkTts;
         private bool _disposed = false;
         private bool _initialized = false;
-        
+
         /// <summary>
         /// Initializes a new instance of the CharacterVoiceFactory.
         /// </summary>
-        internal CharacterVoiceFactory()
+        public CharacterVoiceFactory(ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
             var initConfig = new TTSInferenceConfig();
-            _sparkTts = new SparkTTS(initConfig);
+            _sparkTts = new SparkTTS(executionProvider, initConfig);
             _initialized = _sparkTts.IsInitialized;
         }
 
