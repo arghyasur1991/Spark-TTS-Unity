@@ -23,7 +23,7 @@ namespace SparkTTS
         /// <summary>
         /// Initializes a new instance of the CharacterVoiceFactory.
         /// </summary>
-        public CharacterVoiceFactory(ExecutionProvider executionProvider = ExecutionProvider.CPU)
+        internal CharacterVoiceFactory(ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
             var initConfig = new TTSInferenceConfig();
             _sparkTts = new SparkTTS(initConfig, executionProvider);
