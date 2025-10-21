@@ -19,6 +19,7 @@ namespace SparkTTS
         private SparkTTS _sparkTts;
         private bool _disposed = false;
         private bool _initialized = false;
+        private ExecutionProvider _executionProvider;
 
         /// <summary>
         /// Initializes a new instance of the CharacterVoiceFactory.
@@ -28,10 +29,24 @@ namespace SparkTTS
             var initConfig = new TTSInferenceConfig();
             _sparkTts = new SparkTTS(initConfig, executionProvider);
             _initialized = _sparkTts.IsInitialized;
+            _executionProvider = executionProvider;
         }
 
-        public static void Initialize(LogLevel logLevel = LogLevel.INFO, bool optimalMemoryUsage = false)
+        // <summary>
+        /// Initializes or re-initializes the CharacterVoiceFactory with the specified settings.
+        /// </summary>
+        /// <param name="logLevel">The logging level.</param>
+        /// <param name="optimalMemoryUsage">Whether to optimize for memory usage.</param>
+        /// <param name="executionProvider">The execution provider to use (CPU or CUDA).</param>
+        public static void Initialize(LogLevel logLevel = LogLevel.INFO, bool optimalMemoryUsage = false, ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
+            // If the requested execution provider is different, re-create the singleton instance.
+            if (Instance._executionProvider != executionProvider)
+            {
+                Instance.Dispose();
+                Instance = new CharacterVoiceFactory(executionProvider);
+            }
+            
             Logger.LogLevel = logLevel;
             ORTModel.InitializeEnvironment(logLevel);
             Instance._sparkTts.OptimalMemoryUsage = optimalMemoryUsage;
