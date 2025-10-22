@@ -874,7 +874,7 @@ namespace SparkTTS.Models
         /// <summary>
         /// Loading information structure for ONNX Runtime logging.
         /// </summary>
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         private struct LoadingInfo
         {
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
