@@ -104,7 +104,7 @@ namespace SparkTTS.Core
         private const string START_GLOBAL_TOKEN = "<|start_global_token|>";
         private const string START_SEMANTIC_TOKEN = "<|start_semantic_token|>";
 
-        public SparkTTS(TTSInferenceConfig config = null, ExecutionProvider executionProvider = ExecutionProvider.CPU)
+        public SparkTTS(TTSInferenceConfig config = null)
         {
             try
             {
@@ -141,12 +141,12 @@ namespace SparkTTS.Core
 
                 // --- Initialize ONNX Models ---
                 Logger.LogVerbose("[SparkTTS] Initializing ONNX Models...");
-                _melModel = new MelSpectrogramModel(executionProvider);
-                _speakerEncoderModel = new SpeakerEncoderModel(executionProvider);
-                _llmModel = new LLMModel(tokenizerDef, executionProvider); // Pass tokenizer definition
-                _vocoderModel = new VocoderModel(executionProvider);
-                _wav2Vec2Model = new Wav2Vec2Model(executionProvider);
-                _encoderQuantizerModel = new BiCodecEncoderQuantizerModel(executionProvider);
+                _melModel = new MelSpectrogramModel();
+                _speakerEncoderModel = new SpeakerEncoderModel();
+                _llmModel = new LLMModel(tokenizerDef); // Pass tokenizer definition
+                _vocoderModel = new VocoderModel();
+                _wav2Vec2Model = new Wav2Vec2Model();
+                _encoderQuantizerModel = new BiCodecEncoderQuantizerModel();
                 Logger.LogVerbose("[SparkTTS] ONNX Models Initialized.");
 
                 _audioTokenizer = new SparkTTSAudioTokenizer(
@@ -176,6 +176,23 @@ namespace SparkTTS.Core
                 // Dispose any partially initialized models if necessary
                 Dispose();
             }
+        }
+        
+        /// <summary>
+        /// Sets the execution provider for the ONNX model.
+        /// This determines the hardware backend (e.g., CPU, CUDA, CoreML) to be used for inference.
+        /// This method must be called before the model loading is initiated.
+        /// </summary>
+        /// <param name="executionProvider">The execution provider to use for the model.</param>
+        public void SetExecutionProvider(ExecutionProvider executionProvider)
+        {
+            _melModel.SetExecutionProvider(executionProvider);
+            _speakerEncoderModel.SetExecutionProvider(executionProvider);
+            _llmModel.SetExecutionProvider(executionProvider);
+            _vocoderModel.SetExecutionProvider(executionProvider);
+            _wav2Vec2Model.SetExecutionProvider(executionProvider);
+            _encoderQuantizerModel.SetExecutionProvider(executionProvider);
+            Logger.Log($"[SparkTTS] Set Execution Provider for all models to: {executionProvider}");
         }
 
         /// <summary>

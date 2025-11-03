@@ -20,11 +20,10 @@ namespace SparkTTS.Models
         /// <summary>
         /// Initializes a new instance of the Wav2Vec2Model class.
         /// </summary>
-        public Wav2Vec2Model(ExecutionProvider executionProvider)
+        public Wav2Vec2Model()
             : base(SparkTTSModelPaths.Wav2Vec2ModelName, 
                    SparkTTSModelPaths.Wav2Vec2Folder,
-                  precision: Precision.FP16,
-                  executionProvider: executionProvider)
+                  precision: Precision.FP16)
         {
             Logger.LogVerbose("[Wav2Vec2Model] Initialized successfully");
         }

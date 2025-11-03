@@ -85,13 +85,11 @@ namespace SparkTTS.Models
         /// <param name="modelName">The name of the model file (without extension)</param>
         /// <param name="modelFolder">The folder containing the model (from SparkTTSModelPaths)</param>
         /// <param name="precision">The precision of the model</param>
-        /// <param name="executionProvider">The execution provider for the model</param>
         protected ORTModel(
             string modelName, 
             string modelFolder, 
             bool preAllocateOutputs = false,
-            Precision precision = Precision.FP32, 
-            ExecutionProvider executionProvider = ExecutionProvider.CPU)
+            Precision precision = Precision.FP32)
         {
             if (string.IsNullOrEmpty(modelName))
                 throw new ArgumentNullException(nameof(modelName));
@@ -102,7 +100,6 @@ namespace SparkTTS.Models
             {
                 ModelName = modelName,
                 Precision = precision,
-                ExecutionProvider = executionProvider,
                 ModelPath = Path.Combine(
                     Application.streamingAssetsPath,
                     SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets,
@@ -111,6 +108,19 @@ namespace SparkTTS.Models
             _preAllocateOutputs = preAllocateOutputs;
         }
 
+        #endregion
+        
+        #region Public Methods
+        
+        /// <summary>
+        /// Sets the execution provider for the ONNX model.
+        /// </summary>
+        /// <param name="executionProvider">The execution provider to use for the model.</param>
+        public void SetExecutionProvider(ExecutionProvider executionProvider)
+        {
+            _config.ExecutionProvider = executionProvider;
+        }
+        
         #endregion
 
         #region Public Methods - Input Loading

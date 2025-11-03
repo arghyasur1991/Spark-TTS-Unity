@@ -23,10 +23,9 @@ namespace SparkTTS.Models
         /// <summary>
         /// Initializes a new instance of the BiCodecEncoderQuantizerModel class.
         /// </summary>
-        public BiCodecEncoderQuantizerModel(ExecutionProvider executionProvider)
+        public BiCodecEncoderQuantizerModel()
             : base(SparkTTSModelPaths.BiCodecEncoderQuantizerModelName, 
-                   SparkTTSModelPaths.BiCodecFolder,
-                   executionProvider: executionProvider)
+                   SparkTTSModelPaths.BiCodecFolder)
         {
             Logger.Log("[BiCodecEncoderQuantizerModel] Initialized successfully");
         }

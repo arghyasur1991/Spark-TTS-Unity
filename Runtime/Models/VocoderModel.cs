@@ -19,11 +19,10 @@ namespace SparkTTS.Models
         /// <summary>
         /// Initializes a new instance of the VocoderModel class.
         /// </summary>
-        public VocoderModel(ExecutionProvider executionProvider)
+        public VocoderModel()
             : base(SparkTTSModelPaths.VocoderModelName, 
                    SparkTTSModelPaths.VocoderFolder,
-                   preAllocateOutputs: true,
-                   executionProvider: executionProvider)
+                   preAllocateOutputs: true)
         {
             Logger.LogVerbose("[VocoderModel] Initialized successfully");
         }

@@ -78,10 +78,9 @@ namespace SparkTTS.Models
         /// </summary>
         /// <param name="tokenizerDef">The tokenizer definition containing special tokens</param>
         /// <exception cref="ArgumentNullException">Thrown when tokenizerDef is null</exception>
-        public LLMModel(TokenizerDefinition tokenizerDef, ExecutionProvider executionProvider)
+        public LLMModel(TokenizerDefinition tokenizerDef)
             : base(SparkTTSModelPaths.LLMModelName, 
-                   SparkTTSModelPaths.LLMFolder,
-                   executionProvider: executionProvider)
+                   SparkTTSModelPaths.LLMFolder)
         {
             if (tokenizerDef == null)
                 throw new ArgumentNullException(nameof(tokenizerDef), "TokenizerDefinition cannot be null for LLMModel.");
