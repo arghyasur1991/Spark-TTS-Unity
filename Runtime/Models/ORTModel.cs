@@ -85,11 +85,13 @@ namespace SparkTTS.Models
         /// <param name="modelName">The name of the model file (without extension)</param>
         /// <param name="modelFolder">The folder containing the model (from SparkTTSModelPaths)</param>
         /// <param name="precision">The precision of the model</param>
+        /// <param name="executionProvider">The execution provider for the model</param>
         protected ORTModel(
             string modelName, 
             string modelFolder, 
             bool preAllocateOutputs = false,
-            Precision precision = Precision.FP32)
+            Precision precision = Precision.FP32,
+            ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
             if (string.IsNullOrEmpty(modelName))
                 throw new ArgumentNullException(nameof(modelName));
@@ -100,6 +102,7 @@ namespace SparkTTS.Models
             {
                 ModelName = modelName,
                 Precision = precision,
+                ExecutionProvider = executionProvider,
                 ModelPath = Path.Combine(
                     Application.streamingAssetsPath,
                     SparkTTSModelPaths.BaseSparkTTSPathInStreamingAssets,
