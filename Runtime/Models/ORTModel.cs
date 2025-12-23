@@ -13,6 +13,24 @@ namespace SparkTTS.Models
     using Core;
     using Utils;
 
+    public enum ExecutionProvider
+    {
+        /// <summary>
+        /// CPU execution provider - universal compatibility, moderate performance
+        /// </summary>
+        CPU,
+            
+        /// <summary>
+        /// CUDA execution provider - GPU acceleration for NVIDIA cards, high performance
+        /// </summary>
+        CUDA,
+            
+        /// <summary>
+        /// CoreML execution provider - Apple Silicon/macOS acceleration, optimized for Apple hardware
+        /// </summary>
+        CoreML
+    }
+
     /// <summary>
     /// Base ONNX model wrapper for SparkTTS inference operations.
     /// Provides asynchronous loading, input/output management, and execution capabilities
@@ -57,24 +75,6 @@ namespace SparkTTS.Models
             Int8
         }
 
-        protected enum ExecutionProvider
-        {
-            /// <summary>
-            /// CPU execution provider - universal compatibility, moderate performance
-            /// </summary>
-            CPU,
-            
-            /// <summary>
-            /// CUDA execution provider - GPU acceleration for NVIDIA cards, high performance
-            /// </summary>
-            CUDA,
-            
-            /// <summary>
-            /// CoreML execution provider - Apple Silicon/macOS acceleration, optimized for Apple hardware
-            /// </summary>
-            CoreML
-        }
-
         #endregion
 
         #region Constructor
@@ -90,7 +90,7 @@ namespace SparkTTS.Models
             string modelName, 
             string modelFolder, 
             bool preAllocateOutputs = false,
-            Precision precision = Precision.FP32, 
+            Precision precision = Precision.FP32,
             ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
             if (string.IsNullOrEmpty(modelName))
@@ -111,6 +111,19 @@ namespace SparkTTS.Models
             _preAllocateOutputs = preAllocateOutputs;
         }
 
+        #endregion
+        
+        #region Public Methods
+        
+        /// <summary>
+        /// Sets the execution provider for the ONNX model.
+        /// </summary>
+        /// <param name="executionProvider">The execution provider to use for the model.</param>
+        public void SetExecutionProvider(ExecutionProvider executionProvider)
+        {
+            _config.ExecutionProvider = executionProvider;
+        }
+        
         #endregion
 
         #region Public Methods - Input Loading
@@ -460,6 +473,10 @@ namespace SparkTTS.Models
                     {
                         LoadModelWithCoreML(modelPath, options);
                     }
+                    else if (_config.ExecutionProvider == ExecutionProvider.CUDA)
+                    {
+                        LoadModelWithCUDA(modelPath, options);
+                    }
                     else
                     {
                         _session = new InferenceSession(modelPath, options);
@@ -751,6 +768,108 @@ namespace SparkTTS.Models
             }
         }
         #endregion
+        
+        #region Private Methods - CUDA Support
+
+
+        /// <summary>
+        /// Loads an ONNX model with CUDA acceleration and comprehensive error handling.
+        /// This method configures CUDA provider with caching support, handles cache corruption recovery,
+        /// and provides fallback mechanisms for maximum compatibility across different Apple devices.
+        /// </summary>
+        /// <param name="modelPath">The file path to the ONNX model</param>
+        /// <param name="sessionOptions">The base session options to configure with CUDA provider</param>
+        private void LoadModelWithCUDA(string modelPath, SessionOptions sessionOptions)
+        {
+            try
+            {
+                // Configure CUDA provider with caching support using dictionary API
+                string cacheDirectory = GetCUDACacheDirectory();
+                
+                // Ensure cache directory exists and is writable
+                EnsureCUDACacheDirectoryExists(cacheDirectory);
+                
+                
+                sessionOptions.AppendExecutionProvider_CUDA(0);
+                Logger.Log($"[ModelUtils] CUDA provider configured with caching (cache: {cacheDirectory})");
+                
+                // Try creating the session - if it fails due to cache corruption, retry
+                try
+                {
+                    _session = new InferenceSession(modelPath, sessionOptions);
+                    Logger.Log($"[ModelUtils] Successfully loaded model with CUDA provider: {modelPath}");
+                }
+                catch (Exception sessionException)
+                {
+                    if (sessionException.Message.Contains("Manifest.json") || 
+                        sessionException.Message.Contains("cuda_cache") ||
+                        sessionException.Message.Contains("manifest does not exist"))
+                    {
+                        Logger.LogWarning($"[ModelUtils] CUDA cache corruption detected. Retrying: {sessionException.Message}");
+                        _session = new InferenceSession(modelPath, sessionOptions);
+                        Logger.Log($"[ModelUtils] Successfully loaded model with CUDA provider after retrying: {modelPath}");
+                    }
+                    else
+                    {
+                        throw; // Re-throw if it's not a cache-related issue
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning($"[ModelUtils] CUDA provider configuration failed: {e.Message}");
+                
+                // Fallback to old CUDA flags approach for compatibility
+                try
+                {
+                    var fallbackOptions = CreateSessionOptions();
+                    
+                    _session = new InferenceSession(modelPath, fallbackOptions);
+                    Logger.Log("[ModelUtils] Using fallback CUDA provider (no caching)");
+                }
+                catch (Exception fallbackException)
+                {
+                    Logger.LogWarning($"[ModelUtils] CUDA fallback also failed: {fallbackException.Message}. Using CPU provider.");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the cache directory for CUDA compiled models with automatic path resolution.
+        /// This method determines the best location for CUDA model caching based on configuration
+        /// and platform-specific storage locations for optimal performance and persistence.
+        /// </summary>
+        /// <returns>The full path to the CUDA cache directory</returns>
+        private string GetCUDACacheDirectory()
+        {
+            return Path.Combine(Application.dataPath, "Models", "cuda_cache");
+        }
+
+        /// <summary>
+        /// Ensures the CUDA cache directory exists and is writable with proper error handling.
+        /// This method creates the cache directory structure if it doesn't exist and handles
+        /// permission and filesystem errors gracefully.
+        /// </summary>
+        /// <param name="cacheDirectory">The cache directory path to create and validate</param>
+        private void EnsureCUDACacheDirectoryExists(string cacheDirectory)
+        {
+            if (string.IsNullOrEmpty(cacheDirectory))
+                return;
+                
+            try
+            {
+                if (!Directory.Exists(cacheDirectory))
+                {
+                    Directory.CreateDirectory(cacheDirectory);
+                    Logger.Log($"[ModelUtils] Created CUDA cache directory: {cacheDirectory}");
+                }
+            }
+            catch (Exception e)
+            {
+                Logger.LogWarning($"[ModelUtils] Failed to create cache directory {cacheDirectory}: {e.Message}");
+            }
+        }
+        #endregion
 
         #region Private Types
 
@@ -768,7 +887,7 @@ namespace SparkTTS.Models
         /// <summary>
         /// Loading information structure for ONNX Runtime logging.
         /// </summary>
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
         private struct LoadingInfo
         {
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]

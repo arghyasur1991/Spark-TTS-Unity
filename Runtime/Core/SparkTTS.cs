@@ -177,6 +177,23 @@ namespace SparkTTS.Core
                 Dispose();
             }
         }
+        
+        /// <summary>
+        /// Sets the execution provider for the ONNX model.
+        /// This determines the hardware backend (e.g., CPU, CUDA, CoreML) to be used for inference.
+        /// This method must be called before the model loading is initiated.
+        /// </summary>
+        /// <param name="executionProvider">The execution provider to use for the model.</param>
+        public void SetExecutionProvider(ExecutionProvider executionProvider)
+        {
+            _melModel.SetExecutionProvider(executionProvider);
+            _speakerEncoderModel.SetExecutionProvider(executionProvider);
+            _llmModel.SetExecutionProvider(executionProvider);
+            _vocoderModel.SetExecutionProvider(executionProvider);
+            _wav2Vec2Model.SetExecutionProvider(executionProvider);
+            _encoderQuantizerModel.SetExecutionProvider(executionProvider);
+            Logger.Log($"[SparkTTS] Set Execution Provider for all models to: {executionProvider}");
+        }
 
         /// <summary>
         /// Processes input for voice cloning, aligning with Python's process_prompt method
