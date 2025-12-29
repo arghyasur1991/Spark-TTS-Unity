@@ -168,6 +168,13 @@ namespace SparkTTS.Core
                 _updateTextInTokenizedInputsTimer = new AggregatedTimer("Update Text in Tokenized Inputs");
                 IsInitialized = true;
                 Logger.LogVerbose("[SparkTTS] Successfully initialized all components.");
+                
+                // Start loading all models in Performance mode
+                if (!OptimalMemoryUsage)
+                {
+                    Logger.Log("[SparkTTS] Starting model preload (Performance mode)...");
+                    StartLoadingGeneratorModels();
+                }
             }
             catch (Exception e)
             {
