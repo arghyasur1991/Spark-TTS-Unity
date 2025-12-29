@@ -38,19 +38,16 @@ namespace SparkTTS.Models
     {
         /// <summary>
         /// Load all models at startup for fastest inference. Higher memory usage.
-        /// Matches LiveTalk Performance mode.
         /// </summary>
         Performance,
         
         /// <summary>
         /// Load models on demand and keep them alive. Balanced approach.
-        /// Matches LiveTalk Balanced mode.
         /// </summary>
         Balanced,
         
         /// <summary>
         /// Load models on demand and dispose after use. Lowest memory usage but slower.
-        /// Matches LiveTalk Optimal mode.
         /// </summary>
         Optimal
     }

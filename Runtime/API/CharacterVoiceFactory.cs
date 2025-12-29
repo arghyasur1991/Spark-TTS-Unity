@@ -41,19 +41,6 @@ namespace SparkTTS
         /// Initializes or re-initializes the CharacterVoiceFactory with the specified settings.
         /// </summary>
         /// <param name="logLevel">The logging level.</param>
-        /// <param name="optimalMemoryUsage">Whether to optimize for memory usage (deprecated, use memoryUsage instead).</param>
-        /// <param name="executionProvider">The execution provider to use (CPU or CUDA).</param>
-        public static void Initialize(LogLevel logLevel = LogLevel.INFO, bool optimalMemoryUsage = false, ExecutionProvider executionProvider = ExecutionProvider.CPU)
-        {
-            // Map legacy boolean to new enum
-            var memoryUsage = optimalMemoryUsage ? MemoryUsage.Optimal : MemoryUsage.Balanced;
-            Initialize(logLevel, memoryUsage, executionProvider);
-        }
-
-        /// <summary>
-        /// Initializes or re-initializes the CharacterVoiceFactory with the specified settings.
-        /// </summary>
-        /// <param name="logLevel">The logging level.</param>
         /// <param name="memoryUsage">The memory usage mode (Performance, Balanced, or Optimal).</param>
         /// <param name="executionProvider">The execution provider to use (CPU, CUDA, or CoreML).</param>
         public static void Initialize(LogLevel logLevel, MemoryUsage memoryUsage, ExecutionProvider executionProvider = ExecutionProvider.CPU)
@@ -62,8 +49,6 @@ namespace SparkTTS
             ORTModel.InitializeEnvironment(logLevel);
             ORTModel.SetMemoryUsage(memoryUsage);
             
-            // Set legacy OptimalMemoryUsage flag for backward compatibility
-            Instance._sparkTts.OptimalMemoryUsage = memoryUsage == MemoryUsage.Optimal;
             Instance._sparkTts.SetExecutionProvider(executionProvider);
             
             Logger.Log($"[CharacterVoiceFactory] Initialized with MemoryUsage: {memoryUsage}, ExecutionProvider: {executionProvider}");
@@ -74,9 +59,8 @@ namespace SparkTTS
         /// In Performance mode, waits for all models to finish loading.
         /// In other modes, just verifies initialization.
         /// </summary>
-        /// <param name="cancellationToken">Optional cancellation token</param>
         /// <returns>A task that completes when ready</returns>
-        public static async Task WaitForModelsLoadedAsync(CancellationToken cancellationToken = default)
+        public static async Task WaitForModelsLoadedAsync()
         {
             if (!Instance._initialized)
             {
@@ -87,7 +71,7 @@ namespace SparkTTS
             if (ORTModel.CurrentMemoryUsage == MemoryUsage.Performance)
             {
                 Logger.Log("[CharacterVoiceFactory] Waiting for all models to load (Performance mode)...");
-                await Instance._sparkTts.WaitForAllModelsAsync(cancellationToken);
+                await Instance._sparkTts.WaitForAllModelsAsync();
                 Logger.Log("[CharacterVoiceFactory] All models loaded");
             }
         }

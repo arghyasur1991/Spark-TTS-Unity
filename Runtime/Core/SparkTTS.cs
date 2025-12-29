@@ -91,7 +91,10 @@ namespace SparkTTS.Core
         private readonly AggregatedTimer _audioLoaderTimer;
         private readonly AggregatedTimer _updateTextInTokenizedInputsTimer;
         public static bool LogTiming = false;
-        public bool OptimalMemoryUsage { get; set; } = false;
+        public bool OptimalMemoryUsage 
+        { 
+            get => ORTModel.CurrentMemoryUsage == MemoryUsage.Optimal; 
+        }
 
         public bool IsInitialized { get; private set; } = false;
         private bool _disposed = false;
@@ -170,7 +173,7 @@ namespace SparkTTS.Core
                 Logger.LogVerbose("[SparkTTS] Successfully initialized all components.");
                 
                 // Start loading all models in Performance mode
-                if (!OptimalMemoryUsage)
+                if (ORTModel.CurrentMemoryUsage == MemoryUsage.Performance)
                 {
                     Logger.Log("[SparkTTS] Starting model preload (Performance mode)...");
                     StartLoadingGeneratorModels();
@@ -638,9 +641,8 @@ namespace SparkTTS.Core
         /// Waits for all models to be fully loaded.
         /// Use this in Performance mode to ensure all models are ready before inference.
         /// </summary>
-        /// <param name="cancellationToken">Optional cancellation token</param>
         /// <returns>A task that completes when all models are loaded</returns>
-        public async Task WaitForAllModelsAsync(System.Threading.CancellationToken cancellationToken = default)
+        public async Task WaitForAllModelsAsync()
         {
             Logger.Log("[SparkTTS] Waiting for all models to load...");
             
@@ -655,13 +657,7 @@ namespace SparkTTS.Core
             
             if (loadTasks.Count > 0)
             {
-                // Wait for all tasks with cancellation support
-                var combinedTask = Task.WhenAll(loadTasks);
-                var cancelTask = Task.Delay(-1, cancellationToken);
-                
-                await Task.WhenAny(combinedTask, cancelTask);
-                
-                cancellationToken.ThrowIfCancellationRequested();
+                await Task.WhenAll(loadTasks);
             }
             
             Logger.Log("[SparkTTS] All models loaded successfully");
