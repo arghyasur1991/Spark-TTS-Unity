@@ -627,6 +627,50 @@ namespace SparkTTS.Core
             _vocoderModel.StartLoadingAsync();
         }
 
+        /// <summary>
+        /// Waits for all models to be fully loaded.
+        /// Use this in Performance mode to ensure all models are ready before inference.
+        /// </summary>
+        /// <param name="cancellationToken">Optional cancellation token</param>
+        /// <returns>A task that completes when all models are loaded</returns>
+        public async Task WaitForAllModelsAsync(System.Threading.CancellationToken cancellationToken = default)
+        {
+            Logger.Log("[SparkTTS] Waiting for all models to load...");
+            
+            var loadTasks = new List<Task>();
+            
+            if (_llmModel?.LoadTask != null) loadTasks.Add(_llmModel.LoadTask);
+            if (_melModel?.LoadTask != null) loadTasks.Add(_melModel.LoadTask);
+            if (_speakerEncoderModel?.LoadTask != null) loadTasks.Add(_speakerEncoderModel.LoadTask);
+            if (_wav2Vec2Model?.LoadTask != null) loadTasks.Add(_wav2Vec2Model.LoadTask);
+            if (_encoderQuantizerModel?.LoadTask != null) loadTasks.Add(_encoderQuantizerModel.LoadTask);
+            if (_vocoderModel?.LoadTask != null) loadTasks.Add(_vocoderModel.LoadTask);
+            
+            if (loadTasks.Count > 0)
+            {
+                // Wait for all tasks with cancellation support
+                var combinedTask = Task.WhenAll(loadTasks);
+                var cancelTask = Task.Delay(-1, cancellationToken);
+                
+                await Task.WhenAny(combinedTask, cancelTask);
+                
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            
+            Logger.Log("[SparkTTS] All models loaded successfully");
+        }
+
+        /// <summary>
+        /// Gets whether all models are loaded.
+        /// </summary>
+        public bool AreAllModelsLoaded =>
+            (_llmModel?.IsInitialized ?? false) &&
+            (_melModel?.IsInitialized ?? false) &&
+            (_speakerEncoderModel?.IsInitialized ?? false) &&
+            (_wav2Vec2Model?.IsInitialized ?? false) &&
+            (_encoderQuantizerModel?.IsInitialized ?? false) &&
+            (_vocoderModel?.IsInitialized ?? false);
+
         public void Dispose()
         {
             Dispose(true);

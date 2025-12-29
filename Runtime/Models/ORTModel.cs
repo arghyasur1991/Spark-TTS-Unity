@@ -32,6 +32,51 @@ namespace SparkTTS.Models
     }
 
     /// <summary>
+    /// Memory usage patterns for model loading
+    /// </summary>
+    public enum MemoryUsage
+    {
+        /// <summary>
+        /// Load all models at startup for fastest inference. Higher memory usage.
+        /// Matches LiveTalk Performance mode.
+        /// </summary>
+        Performance,
+        
+        /// <summary>
+        /// Load models on demand and keep them alive. Balanced approach.
+        /// Matches LiveTalk Balanced mode.
+        /// </summary>
+        Balanced,
+        
+        /// <summary>
+        /// Load models on demand and dispose after use. Lowest memory usage but slower.
+        /// Matches LiveTalk Optimal mode.
+        /// </summary>
+        Optimal
+    }
+
+    /// <summary>
+    /// Model load policy for controlling when models are loaded and disposed
+    /// </summary>
+    internal enum ModelLoadPolicy
+    {
+        /// <summary>
+        /// Load model at startup. Never dispose until shutdown.
+        /// </summary>
+        OnStartup,
+        
+        /// <summary>
+        /// Load model on first use. Keep alive after loading.
+        /// </summary>
+        OnDemandKeepAlive,
+        
+        /// <summary>
+        /// Load model on each use. Dispose after use.
+        /// </summary>
+        OnDemand
+    }
+
+    /// <summary>
     /// Base ONNX model wrapper for SparkTTS inference operations.
     /// Provides asynchronous loading, input/output management, and execution capabilities
     /// following the LiveTalk Model design pattern.
@@ -48,6 +93,10 @@ namespace SparkTTS.Models
         private List<NamedOnnxValue> _preallocatedOutputs;
         protected Task<InferenceSession> _loadTask = null;
         private bool _disposed = false;
+        private ModelLoadPolicy _loadPolicy = ModelLoadPolicy.OnDemandKeepAlive;
+        
+        // Static memory usage configuration
+        private static MemoryUsage _memoryUsage = MemoryUsage.Balanced;
         
         // Static logging configuration
         private static bool _loggingInitialized = false;
@@ -62,6 +111,11 @@ namespace SparkTTS.Models
         /// Gets whether the model has been successfully initialized.
         /// </summary>
         public bool IsInitialized { get; protected set; } = false;
+
+        /// <summary>
+        /// Gets the loading task for the model. Can be awaited to ensure model is loaded.
+        /// </summary>
+        public Task LoadTask => _loadTask;
 
         /// <summary>
         /// Gets the current ONNX Runtime logging level.
@@ -109,6 +163,21 @@ namespace SparkTTS.Models
                     modelFolder)
             };
             _preAllocateOutputs = preAllocateOutputs;
+            
+            // Set load policy based on global memory usage setting
+            _loadPolicy = _memoryUsage switch
+            {
+                MemoryUsage.Performance => ModelLoadPolicy.OnStartup,
+                MemoryUsage.Balanced => ModelLoadPolicy.OnDemandKeepAlive,
+                MemoryUsage.Optimal => ModelLoadPolicy.OnDemand,
+                _ => ModelLoadPolicy.OnDemandKeepAlive
+            };
+            
+            // Start loading immediately in Performance mode
+            if (_loadPolicy == ModelLoadPolicy.OnStartup)
+            {
+                StartLoadingAsync();
+            }
         }
 
         #endregion
@@ -148,7 +217,9 @@ namespace SparkTTS.Models
                 StartLoadingAsync();
             }
             var result = await func();
-            if (standaloneLoading)
+            
+            // Only dispose in OnDemand mode (Optimal memory usage)
+            if (standaloneLoading && _loadPolicy == ModelLoadPolicy.OnDemand)
             {
                 Dispose();
             }
@@ -389,6 +460,22 @@ namespace SparkTTS.Models
             };
             InitializeOnnxLogging();
         }
+
+        /// <summary>
+        /// Sets the global memory usage mode for all SparkTTS models.
+        /// Must be called before any models are created.
+        /// </summary>
+        /// <param name="memoryUsage">The memory usage mode to use</param>
+        public static void SetMemoryUsage(MemoryUsage memoryUsage)
+        {
+            _memoryUsage = memoryUsage;
+            Logger.Log($"[ORTModel] Memory usage mode set to: {memoryUsage}");
+        }
+
+        /// <summary>
+        /// Gets the current memory usage mode.
+        /// </summary>
+        public static MemoryUsage CurrentMemoryUsage => _memoryUsage;
 
         #endregion
 
