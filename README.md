@@ -79,6 +79,56 @@ Some dependencies require additional scoped registry configuration. Add the foll
 
 ## Usage
 
+### Initialization
+
+Before using SparkTTS, you should initialize the factory with your preferred settings:
+
+```csharp
+using SparkTTS;
+using SparkTTS.Models;
+using SparkTTS.Utils;
+
+// Initialize with default settings (Balanced memory usage, CPU execution)
+CharacterVoiceFactory.Initialize();
+
+// Or customize initialization
+CharacterVoiceFactory.Initialize(
+    logLevel: LogLevel.INFO,
+    memoryUsage: MemoryUsage.Performance,  // Performance, Balanced, or Optimal
+    executionProvider: ExecutionProvider.CoreML  // CPU, CUDA, or CoreML
+);
+```
+
+#### Memory Usage Modes
+
+SparkTTS supports three memory usage patterns:
+
+- **`MemoryUsage.Performance`**: Loads all models at startup for fastest inference. Higher memory usage (~3GB). Best for desktop applications.
+- **`MemoryUsage.Balanced`**: Loads models on demand and keeps them in memory. Good balance of speed and memory usage. (Default)
+- **`MemoryUsage.Optimal`**: Loads models on demand and disposes them after use. Lowest memory usage but slower. Best for mobile devices.
+
+#### Waiting for Models to Load (Performance Mode)
+
+When using Performance mode, you may want to wait for all models to finish loading before generating speech:
+
+```csharp
+async void Start()
+{
+    CharacterVoiceFactory.Initialize(
+        LogLevel.INFO, 
+        MemoryUsage.Performance,
+        ExecutionProvider.CoreML
+    );
+    
+    // Wait for all models to be ready
+    await CharacterVoiceFactory.WaitForModelsLoadedAsync();
+    
+    Debug.Log("All models loaded and ready!");
+    
+    // Now create voices and generate speech...
+}
+```
+
 ### Basic Voice Generation Using Styles
 
 ```csharp
@@ -94,8 +144,15 @@ public class TTSExample : MonoBehaviour
 
     async void Start()
     {
-        // Initialize the TTS system (optional - sets log levels and optimal memory usage mode)
-        CharacterVoiceFactory.Initialize(LogLevel.Warning, true); // Set OptimalMemoryUsage to true for IOS
+        // Initialize with Performance mode for fastest inference
+        CharacterVoiceFactory.Initialize(
+            LogLevel.INFO, 
+            MemoryUsage.Performance,
+            ExecutionProvider.CoreML
+        );
+        
+        // Wait for all models to be ready (Performance mode only)
+        await CharacterVoiceFactory.WaitForModelsLoadedAsync();
         
         // Get reference to AudioSource
         audioSource = GetComponent<AudioSource>();
@@ -155,8 +212,12 @@ public class VoiceCloningExample : MonoBehaviour
     
     async void Start()
     {
-        // Initialize the TTS system (optional - sets log levels)
-        CharacterVoiceFactory.Initialize(DebugLogger.LogLevel.Warning);
+        // Initialize with Optimal mode for mobile devices
+        CharacterVoiceFactory.Initialize(
+            LogLevel.WARNING, 
+            MemoryUsage.Optimal,
+            ExecutionProvider.CPU
+        );
         
         audioSource = GetComponent<AudioSource>();
         

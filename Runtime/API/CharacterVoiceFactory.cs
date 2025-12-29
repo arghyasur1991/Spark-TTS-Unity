@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -16,6 +18,11 @@ namespace SparkTTS
 
         public bool LogTiming { get => SparkTTS.LogTiming; set => SparkTTS.LogTiming = value; }
         
+        /// <summary>
+        /// Gets whether the SparkTTS engine is initialized and ready for use.
+        /// </summary>
+        public static bool IsReady => Instance._initialized && !Instance._disposed;
+        
         private SparkTTS _sparkTts;
         private bool _disposed = false;
         private bool _initialized = false;
@@ -30,18 +37,43 @@ namespace SparkTTS
             _initialized = _sparkTts.IsInitialized;
         }
 
-        // <summary>
+        /// <summary>
         /// Initializes or re-initializes the CharacterVoiceFactory with the specified settings.
         /// </summary>
         /// <param name="logLevel">The logging level.</param>
-        /// <param name="optimalMemoryUsage">Whether to optimize for memory usage.</param>
-        /// <param name="executionProvider">The execution provider to use (CPU or CUDA).</param>
-        public static void Initialize(LogLevel logLevel = LogLevel.INFO, bool optimalMemoryUsage = false, ExecutionProvider executionProvider = ExecutionProvider.CPU)
+        /// <param name="memoryUsage">The memory usage mode (Performance, Balanced, or Optimal).</param>
+        /// <param name="executionProvider">The execution provider to use (CPU, CUDA, or CoreML).</param>
+        public static void Initialize(LogLevel logLevel, MemoryUsage memoryUsage, ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
             Logger.LogLevel = logLevel;
             ORTModel.InitializeEnvironment(logLevel);
-            Instance._sparkTts.OptimalMemoryUsage = optimalMemoryUsage;
+            ORTModel.SetMemoryUsage(memoryUsage);
+            
             Instance._sparkTts.SetExecutionProvider(executionProvider);
+            
+            Logger.Log($"[CharacterVoiceFactory] Initialized with MemoryUsage: {memoryUsage}, ExecutionProvider: {executionProvider}");
+        }
+
+        /// <summary>
+        /// Waits for SparkTTS models to be ready.
+        /// In Performance mode, waits for all models to finish loading.
+        /// In other modes, just verifies initialization.
+        /// </summary>
+        /// <returns>A task that completes when ready</returns>
+        public static async Task WaitForModelsLoadedAsync()
+        {
+            if (!Instance._initialized)
+            {
+                throw new InvalidOperationException("CharacterVoiceFactory is not initialized");
+            }
+            
+            // In Performance mode, wait for all models to load
+            if (ORTModel.CurrentMemoryUsage == MemoryUsage.Performance)
+            {
+                Logger.Log("[CharacterVoiceFactory] Waiting for all models to load (Performance mode)...");
+                await Instance._sparkTts.WaitForAllModelsAsync();
+                Logger.Log("[CharacterVoiceFactory] All models loaded");
+            }
         }
         
         /// <summary>

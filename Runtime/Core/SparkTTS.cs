@@ -91,7 +91,10 @@ namespace SparkTTS.Core
         private readonly AggregatedTimer _audioLoaderTimer;
         private readonly AggregatedTimer _updateTextInTokenizedInputsTimer;
         public static bool LogTiming = false;
-        public bool OptimalMemoryUsage { get; set; } = false;
+        public bool OptimalMemoryUsage 
+        { 
+            get => ORTModel.CurrentMemoryUsage == MemoryUsage.Optimal; 
+        }
 
         public bool IsInitialized { get; private set; } = false;
         private bool _disposed = false;
@@ -168,6 +171,13 @@ namespace SparkTTS.Core
                 _updateTextInTokenizedInputsTimer = new AggregatedTimer("Update Text in Tokenized Inputs");
                 IsInitialized = true;
                 Logger.LogVerbose("[SparkTTS] Successfully initialized all components.");
+                
+                // Start loading all models in Performance mode
+                if (ORTModel.CurrentMemoryUsage == MemoryUsage.Performance)
+                {
+                    Logger.Log("[SparkTTS] Starting model preload (Performance mode)...");
+                    StartLoadingGeneratorModels();
+                }
             }
             catch (Exception e)
             {
@@ -626,6 +636,43 @@ namespace SparkTTS.Core
             _llmModel.StartLoadingAsync();
             _vocoderModel.StartLoadingAsync();
         }
+
+        /// <summary>
+        /// Waits for all models to be fully loaded.
+        /// Use this in Performance mode to ensure all models are ready before inference.
+        /// </summary>
+        /// <returns>A task that completes when all models are loaded</returns>
+        public async Task WaitForAllModelsAsync()
+        {
+            Logger.Log("[SparkTTS] Waiting for all models to load...");
+            
+            var loadTasks = new List<Task>();
+            
+            if (_llmModel?.LoadTask != null) loadTasks.Add(_llmModel.LoadTask);
+            if (_melModel?.LoadTask != null) loadTasks.Add(_melModel.LoadTask);
+            if (_speakerEncoderModel?.LoadTask != null) loadTasks.Add(_speakerEncoderModel.LoadTask);
+            if (_wav2Vec2Model?.LoadTask != null) loadTasks.Add(_wav2Vec2Model.LoadTask);
+            if (_encoderQuantizerModel?.LoadTask != null) loadTasks.Add(_encoderQuantizerModel.LoadTask);
+            if (_vocoderModel?.LoadTask != null) loadTasks.Add(_vocoderModel.LoadTask);
+            
+            if (loadTasks.Count > 0)
+            {
+                await Task.WhenAll(loadTasks);
+            }
+            
+            Logger.Log("[SparkTTS] All models loaded successfully");
+        }
+
+        /// <summary>
+        /// Gets whether all models are loaded.
+        /// </summary>
+        public bool AreAllModelsLoaded =>
+            (_llmModel?.IsInitialized ?? false) &&
+            (_melModel?.IsInitialized ?? false) &&
+            (_speakerEncoderModel?.IsInitialized ?? false) &&
+            (_wav2Vec2Model?.IsInitialized ?? false) &&
+            (_encoderQuantizerModel?.IsInitialized ?? false) &&
+            (_vocoderModel?.IsInitialized ?? false);
 
         public void Dispose()
         {
