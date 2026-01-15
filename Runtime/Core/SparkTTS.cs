@@ -95,6 +95,7 @@ namespace SparkTTS.Core
         { 
             get => ORTModel.CurrentMemoryUsage == MemoryUsage.Optimal; 
         }
+        
 
         public bool IsInitialized { get; private set; } = false;
         private bool _disposed = false;
