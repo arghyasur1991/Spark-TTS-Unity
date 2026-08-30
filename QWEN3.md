@@ -60,9 +60,11 @@ Assets/StreamingAssets/SparkTTS/Qwen3-1.7B-Base/
 
 From [zukky/Qwen3-TTS-ONNX-DLL](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL) (~14 GB):
 
-1. Copy `dist/dll_release/onnx_kv/*.onnx` into that folder (single-file ONNX, no `.onnx.data`).
-2. Copy `dist/dll_release/models/Qwen3-TTS-12Hz-1.7B-Base/{config.json,vocab.json,merges.txt}` next to them (or into a `tokenizer/` subfolder for the vocab/merges pair).
+1. Copy `onnx_kv/*.onnx` into that folder (single-file ONNX, no `.onnx.data`). On the Hub those files live at repo-root `onnx_kv/`, not `dist/dll_release/`.
+2. Copy `models/Qwen3-TTS-12Hz-1.7B-Base/{config.json,vocab.json,merges.txt}` next to them (or into a `tokenizer/` subfolder for the vocab/merges pair).
 3. Skip `qwen3_tts_rust.dll`, `qwen3_tts.h`, and `tokenizer12hz_encode.onnx` (encode is ICL-only; Spark’s clone API has no reference transcript).
+
+This package does not download Hub files. A host app copies the layouts above into `StreamingAssets/SparkTTS/`.
 
 `QwenModelPaths.IsCustomVoicePresent()` / `IsBasePresent()` / `GetMissingBaseFiles()` are the runtime checklist. `CharacterVoiceFactory.IsReady` is true when **either** CustomVoice **or** Base is complete.
 
