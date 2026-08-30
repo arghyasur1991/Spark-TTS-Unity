@@ -23,7 +23,7 @@
     {
       "displayName": "Character Voice Demo",
       "description": "Demo of using Spark TTS in Unity",
-      "path": "Samples/CharacterVoiceDemo"
+      "path": "Samples/Examples"
     }
   ]
 }
