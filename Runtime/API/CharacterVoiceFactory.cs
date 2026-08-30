@@ -1,13 +1,13 @@
 using System;
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.ML.OnnxRuntime;
 using UnityEngine;
+using TTSLogger = SparkTTS.Utils.Logger;
 
 namespace SparkTTS
 {
-    using Core;
     using Models;
+    using Qwen;
     using Utils;
     /// <summary>
     /// Factory class for creating CharacterVoice objects using either voice cloning or style-based generation.
@@ -16,92 +16,103 @@ namespace SparkTTS
     {
         public static CharacterVoiceFactory Instance { get; private set; } = new();
 
-        public bool LogTiming { get => SparkTTS.LogTiming; set => SparkTTS.LogTiming = value; }
-        
-        /// <summary>
-        /// Gets whether the SparkTTS engine is initialized and ready for use.
-        /// </summary>
-        public static bool IsReady => Instance._initialized && !Instance._disposed;
-        
-        private SparkTTS _sparkTts;
-        private bool _disposed = false;
-        private bool _initialized = false;
+        public bool LogTiming
+        {
+            get => SparkTTS.Core.SparkTTS.LogTiming;
+            set => SparkTTS.Core.SparkTTS.LogTiming = value;
+        }
 
         /// <summary>
-        /// Initializes a new instance of the CharacterVoiceFactory.
+        /// Gets whether the engine is initialized and ready for use.
         /// </summary>
+        public static bool IsReady => Instance._initialized && !Instance._disposed;
+
+        private QwenTtsEngine _engine;
+        private ExecutionProvider _executionProvider = ExecutionProvider.CPU;
+        private bool _disposed;
+        private bool _initialized;
+
         internal CharacterVoiceFactory()
         {
-            var initConfig = new TTSInferenceConfig();
-            _sparkTts = new SparkTTS(initConfig);
-            _initialized = _sparkTts.IsInitialized;
+            _initialized = QwenModelPaths.IsPresent();
+            if (!_initialized)
+            {
+                var missing = QwenModelPaths.GetMissingFiles();
+                TTSLogger.LogWarning(
+                    "[CharacterVoiceFactory] Qwen3-TTS 1.7B files are not under " +
+                    $"{QwenModelPaths.Root}. Missing {missing.Count} file(s). See QWEN3.md.");
+            }
         }
 
         /// <summary>
         /// Initializes or re-initializes the CharacterVoiceFactory with the specified settings.
         /// </summary>
-        /// <param name="logLevel">The logging level.</param>
-        /// <param name="memoryUsage">The memory usage mode (Performance, Balanced, or Optimal).</param>
-        /// <param name="executionProvider">The execution provider to use (CPU, CUDA, or CoreML).</param>
         public static void Initialize(LogLevel logLevel, MemoryUsage memoryUsage, ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
-            Logger.LogLevel = logLevel;
+            TTSLogger.LogLevel = logLevel;
             ORTModel.InitializeEnvironment(logLevel);
             ORTModel.SetMemoryUsage(memoryUsage);
-            
-            Instance._sparkTts.SetExecutionProvider(executionProvider);
-            
-            Logger.Log($"[CharacterVoiceFactory] Initialized with MemoryUsage: {memoryUsage}, ExecutionProvider: {executionProvider}");
+
+            Instance._executionProvider = executionProvider;
+            Instance._initialized = QwenModelPaths.IsPresent();
+            if (!Instance._initialized)
+            {
+                var missing = QwenModelPaths.GetMissingFiles();
+                TTSLogger.LogError(
+                    $"[CharacterVoiceFactory] Qwen3-TTS 1.7B files missing ({missing.Count}). " +
+                    $"Place them at {QwenModelPaths.Root}");
+                return;
+            }
+
+            if (executionProvider != ExecutionProvider.CPU)
+            {
+                TTSLogger.LogWarning(
+                    "[CharacterVoiceFactory] Qwen3-TTS on this branch uses CPU SessionOptions. " +
+                    $"{executionProvider} is ignored.");
+            }
+
+            TTSLogger.Log($"[CharacterVoiceFactory] Initialized Qwen3-TTS 1.7B with MemoryUsage: {memoryUsage}, ExecutionProvider: CPU");
         }
 
         /// <summary>
-        /// Waits for SparkTTS models to be ready.
-        /// In Performance mode, waits for all models to finish loading.
-        /// In other modes, just verifies initialization.
+        /// Waits for models to be ready. Constructs the Qwen engine (embeddings + tokenizer).
+        /// ONNX sessions stay lazy until the first GenerateSpeechAsync.
         /// </summary>
-        /// <returns>A task that completes when ready</returns>
         public static async Task WaitForModelsLoadedAsync()
         {
             if (!Instance._initialized)
             {
                 throw new InvalidOperationException("CharacterVoiceFactory is not initialized");
             }
-            
-            // In Performance mode, wait for all models to load
-            if (ORTModel.CurrentMemoryUsage == MemoryUsage.Performance)
-            {
-                Logger.Log("[CharacterVoiceFactory] Waiting for all models to load (Performance mode)...");
-                await Instance._sparkTts.WaitForAllModelsAsync();
-                Logger.Log("[CharacterVoiceFactory] All models loaded");
-            }
+
+            TTSLogger.Log("[CharacterVoiceFactory] Loading Qwen3-TTS embeddings...");
+            Instance.EnsureEngine();
+            TTSLogger.Log("[CharacterVoiceFactory] Qwen3-TTS embeddings loaded");
+            await Task.Yield();
         }
-        
+
         /// <summary>
         /// Creates a character voice using style-based generation with specified voice parameters.
         /// </summary>
-        /// <param name="gender">The gender parameter (e.g., "female", "male")</param>
-        /// <param name="pitch">The pitch parameter (e.g., "low", "moderate", "high")</param>
-        /// <param name="speed">The speed parameter (e.g., "low", "moderate", "high")</param>
-        /// <param name="referenceText">Optional text to pre-generate for caching tokens</param>
-        /// <returns>A CharacterVoice instance or null if creation fails</returns>
         public async Task<CharacterVoice> CreateFromStyleAsync(string gender, string pitch, string speed, string referenceText = "I am a character voice")
         {
             if (!_initialized || _disposed)
             {
-                Logger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
+                TTSLogger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
                 return null;
             }
-            
+
             if (string.IsNullOrEmpty(gender))
             {
-                Logger.LogError("[CharacterVoiceFactory] Gender parameter is required for style-based voices.");
+                TTSLogger.LogError("[CharacterVoiceFactory] Gender parameter is required for style-based voices.");
                 return null;
             }
-            
+
             try
             {
+                EnsureEngine();
                 CharacterVoice voice = new(
-                    _sparkTts,
+                    _engine,
                     gender: gender.ToLower(),
                     pitch: pitch?.ToLower() ?? "moderate",
                     speed: speed?.ToLower() ?? "moderate",
@@ -109,77 +120,94 @@ namespace SparkTTS
                 );
 
                 await voice.GenerateVoiceAsync(referenceText);
-                _sparkTts.DisposeGeneratorOnlyModels();
                 return voice;
             }
             catch (Exception e)
             {
-                Logger.LogError($"[CharacterVoiceFactory] Exception creating voice from style: {e.Message}\n{e.StackTrace}");
+                TTSLogger.LogError($"[CharacterVoiceFactory] Exception creating voice from style: {e.Message}\n{e.StackTrace}");
                 return null;
             }
         }
+
         public async Task<CharacterVoice> CreateFromFolderAsync(string voiceFolder)
         {
             if (!_initialized || _disposed)
             {
-                Logger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
+                TTSLogger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
                 return null;
             }
-            
+
             try
             {
-                CharacterVoice voice = new(
-                    _sparkTts
-                );
-
+                EnsureEngine();
+                CharacterVoice voice = new(_engine);
                 await voice.LoadVoiceAsync(voiceFolder);
                 return voice;
             }
             catch (Exception e)
             {
-                Logger.LogError($"[CharacterVoiceFactory] Exception creating voice from reference: {e.Message}\n{e.StackTrace}");
+                TTSLogger.LogError($"[CharacterVoiceFactory] Exception creating voice from folder: {e.Message}\n{e.StackTrace}");
                 return null;
             }
         }
+
         public CharacterVoice CreateFromReference(AudioClip referenceClip)
         {
             if (!_initialized || _disposed)
             {
-                Logger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
+                TTSLogger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
                 return null;
             }
-            
-            try
-            {
-                CharacterVoice voice = new(
-                    _sparkTts,
-                    referenceClip
-                );
-                
-                return voice;
-            }
-            catch (Exception e)
-            {
-                Logger.LogError($"[CharacterVoiceFactory] Exception creating voice from reference: {e.Message}\n{e.StackTrace}");
-                return null;
-            }
+
+            TTSLogger.LogError(
+                "[CharacterVoiceFactory] Voice cloning is not supported on Qwen3-TTS CustomVoice 1.7B. " +
+                "Use CreateFromStyleAsync. Cloning needs the Base ONNX export.");
+            return null;
         }
+
+        private void EnsureEngine()
+        {
+            if (_engine != null)
+                return;
+            if (!QwenModelPaths.IsPresent())
+            {
+                throw new InvalidOperationException(
+                    $"Qwen3-TTS 1.7B files not found at {QwenModelPaths.Root}");
+            }
+
+            _engine = new QwenTtsEngine(QwenModelPaths.Root, CreateSessionOptions);
+            TTSLogger.LogVerbose($"[CharacterVoiceFactory] Qwen engine ready (requested EP {_executionProvider}, using CPU SessionOptions)");
+        }
+
+        private SessionOptions CreateSessionOptions()
+        {
+            return new SessionOptions
+            {
+                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+                IntraOpNumThreads = Environment.ProcessorCount,
+                InterOpNumThreads = 1,
+                ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
+                EnableMemoryPattern = true,
+                EnableCpuMemArena = true
+            };
+        }
+
         public void Dispose()
         {
             if (!_disposed)
             {
-                _sparkTts?.Dispose();
-                _sparkTts = null;
+                _engine?.Dispose();
+                _engine = null;
                 _initialized = false;
                 _disposed = true;
             }
-            
+
             GC.SuppressFinalize(this);
         }
-        
+
         ~CharacterVoiceFactory()
         {
             Dispose();
         }
     }
-} 
+}

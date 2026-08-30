@@ -1,6 +1,8 @@
 # Spark-TTS-Unity
 
-Unity package for using Spark-TTS on-device models. This is a C# port of [https://github.com/SparkAudio/Spark-TTS](https://github.com/SparkAudio/Spark-TTS) by SparkAudio team and uses converted ONNX models instead of the PyTorch models in the original repo.
+Unity package for on-device text-to-speech. Public API (`CharacterVoiceFactory`, `CharacterVoice`) matches the original Spark-TTS Unity port.
+
+**`qwen3-tts` branch:** inference is [Qwen3-TTS 1.7B CustomVoice ONNX](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX), ported from [ElBruno.QwenTTS](https://github.com/elbruno/ElBruno.QwenTTS). Place weights locally — this package never downloads them. See **[QWEN3.md](QWEN3.md)**. Voice cloning (`CreateFromReference`) is not supported on CustomVoice.
 
 ## What is Spark-TTS?
 
@@ -10,7 +12,7 @@ Spark-TTS is an open-source text-to-speech system capable of generating high-qua
 
 * 🎮 **Unity-Native Integration**: Simple API designed specifically for Unity
 * 🔊 **Voice Styling**: Customize gender, pitch, and speed parameters
-* 🎭 **Voice Cloning**: Clone voices from reference audio clips
+* 🎭 **Voice styling**: Gender, pitch, and speed (mapped to Qwen speakers + instruct on this branch)
 * 💻 **Runs Offline**: All processing happens on-device
 * ⚡ **Optimized Performance**: Caching system for faster repeated generation
 
@@ -73,7 +75,7 @@ Some dependencies require additional scoped registry configuration. Add the foll
 
 - On-device text-to-speech synthesis
 - Voice styling with adjustable gender, pitch, and speed
-- Voice cloning from reference audio clips
+- Voice cloning is not available on the Qwen3 CustomVoice backend (see QWEN3.md)
 - Optimized for runtime performance
 - Simple API for integration into games and applications
 
@@ -274,8 +276,8 @@ SparkTTS includes a built-in Editor tool that automatically copies the required 
    - Source: `Assets/Models` (automatically detected)
    - Destination: `Assets/StreamingAssets/SparkTTS` (automatically configured)
 3. **Select components**: 
-   - ✅ **SparkTTS Models** (core voice generation models)
-   - ✅ **LLM Models** (large language models for text processing)
+   - ✅ **SparkTTS Models** / **LLM Models** (legacy Spark ONNX; unused on `qwen3-tts`)
+   - ✅ **Qwen3-TTS 1.7B** (`StreamingAssets/SparkTTS/Qwen3-1.7B/`)
 4. **Review selection**: The tool shows exactly which models will be copied and their file sizes
 5. **Deploy**: Click "Deploy SparkTTS Models" to copy the optimized model set
 
