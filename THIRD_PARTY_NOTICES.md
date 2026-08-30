@@ -33,3 +33,15 @@ The in-repo GPT-2 byte-level BPE (`TextTokenizer`) replaces
 `Microsoft.ML.Tokenizers`, which is not available in this Unity package.
 It follows the HuggingFace GPT-2 / Qwen2 tokenizer algorithm used by that
 project.
+
+The mel spectrogram used by 1.7B Base cloning (`Runtime/Qwen/Audio/MelSpectrogram.cs`)
+is also from that project's VoiceCloning module.
+
+## zukky/Qwen3-TTS-ONNX-DLL
+
+The 1.7B Base ONNX graph layout and inference order follow
+[zukky/Qwen3-TTS-ONNX-DLL](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL)
+(Apache-2.0), itself derived from [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS).
+This package does not redistribute those weights or the Windows `qwen3_tts_rust.dll`.
+C# reimplements the Python sample pipeline for Mac/Android.
+

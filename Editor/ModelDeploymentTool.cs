@@ -63,7 +63,8 @@ namespace SparkTTS.Editor
                 new("tokenizer_config.json", "SparkTTS/LLM", "none"),
                 new("generation_config.json", "SparkTTS/LLM", "none"),
             },
-            ["Qwen3_17B"] = BuildQwen17BConfigs()
+            ["Qwen3_17B"] = BuildQwen17BConfigs(),
+            ["Qwen3_17B_Base"] = BuildQwen17BBaseConfigs()
         };
 
         private static List<ModelConfig> BuildQwen17BConfigs()
@@ -101,6 +102,29 @@ namespace SparkTTS.Editor
             return list;
         }
 
+        private static List<ModelConfig> BuildQwen17BBaseConfigs()
+        {
+            const string dir = "SparkTTS/Qwen3-1.7B-Base";
+            var files = new[]
+            {
+                "talker_prefill.onnx",
+                "talker_decode.onnx",
+                "code_predictor.onnx",
+                "code_predictor_embed.onnx",
+                "codec_embed.onnx",
+                "text_project.onnx",
+                "speaker_encoder.onnx",
+                "tokenizer12hz_decode.onnx",
+                "config.json",
+                "vocab.json",
+                "merges.txt",
+            };
+            var list = new List<ModelConfig>();
+            foreach (var rel in files)
+                list.Add(new ModelConfig(rel, dir, "none"));
+            return list;
+        }
+
         #endregion
 
         #region UI Fields
@@ -110,6 +134,7 @@ namespace SparkTTS.Editor
         [SerializeField] private bool includeSparkTTS = true;
         [SerializeField] private bool includeLLM = true;
         [SerializeField] private bool includeQwen17B = true;
+        [SerializeField] private bool includeQwen17BBase = false;
         [SerializeField] private bool overwriteExisting = true;
         [SerializeField] private bool createBackup = true;
         [SerializeField] private bool dryRun = false;
@@ -276,7 +301,8 @@ namespace SparkTTS.Editor
             // Component toggles
             includeSparkTTS = EditorGUILayout.Toggle("Include SparkTTS Models", includeSparkTTS);
             includeLLM = EditorGUILayout.Toggle("Include LLM Models", includeLLM);
-            includeQwen17B = EditorGUILayout.Toggle("Include Qwen3-TTS 1.7B", includeQwen17B);
+            includeQwen17B = EditorGUILayout.Toggle("Include Qwen3-TTS 1.7B CustomVoice", includeQwen17B);
+            includeQwen17BBase = EditorGUILayout.Toggle("Include Qwen3-TTS 1.7B Base (clone)", includeQwen17BBase);
             
             EditorGUILayout.Space();
             
@@ -389,6 +415,9 @@ namespace SparkTTS.Editor
 
             if (includeQwen17B)
                 AddModelsFromCategory("Qwen3_17B");
+
+            if (includeQwen17BBase)
+                AddModelsFromCategory("Qwen3_17B_Base");
             
             // Calculate file sizes and validate paths
             foreach (var model in selectedModels)
@@ -454,7 +483,8 @@ namespace SparkTTS.Editor
                     DryRun = false,
                     IncludeSparkTTS = true,
                     IncludeLLM = true,
-                    IncludeQwen17B = true
+                    IncludeQwen17B = true,
+                    IncludeQwen17BBase = false
                 };
             }
 
@@ -469,6 +499,7 @@ namespace SparkTTS.Editor
                 tool.includeSparkTTS = options.IncludeSparkTTS;
                 tool.includeLLM = options.IncludeLLM;
                 tool.includeQwen17B = options.IncludeQwen17B;
+                tool.includeQwen17BBase = options.IncludeQwen17BBase;
                 
                 tool.RefreshModelList();
                 
@@ -505,6 +536,7 @@ namespace SparkTTS.Editor
             public bool IncludeSparkTTS { get; set; } = true;
             public bool IncludeLLM { get; set; } = true;
             public bool IncludeQwen17B { get; set; } = true;
+            public bool IncludeQwen17BBase { get; set; } = false;
         }
 
         #endregion

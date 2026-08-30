@@ -23,6 +23,8 @@ namespace SparkTTS
 
         private AudioClip _lastGeneratedClip;
         private readonly QwenTtsEngine _engine;
+        private readonly QwenBaseTtsEngine _baseEngine;
+        private readonly float[] _speakerEmbedding;
         private bool _disposed;
         private float[] _referenceWaveform;
 
@@ -42,6 +44,13 @@ namespace SparkTTS
         internal CharacterVoice(QwenTtsEngine engine)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
+        }
+
+        internal CharacterVoice(QwenBaseTtsEngine baseEngine, AudioClip referenceClip, float[] speakerEmbedding)
+        {
+            _baseEngine = baseEngine ?? throw new ArgumentNullException(nameof(baseEngine));
+            _speakerEmbedding = speakerEmbedding ?? throw new ArgumentNullException(nameof(speakerEmbedding));
+            _referenceClip = referenceClip;
         }
 
         internal async Task LoadVoiceAsync(string voiceFolder)
@@ -119,10 +128,25 @@ namespace SparkTTS
             {
                 TTSLogger.Log($"[CharacterVoice.GenerateSpeech] Generating speech for text: {text}");
 
-                string speaker = QwenStyleMap.SpeakerForGender(Gender);
-                string instruct = QwenStyleMap.InstructFor(Pitch, Speed);
-                float[] pcm24 = await _engine.SynthesizeAsync(
-                    text, speaker, QwenStyleMap.DefaultLanguage, instruct);
+                float[] pcm24;
+                if (_baseEngine != null && _speakerEmbedding != null)
+                {
+                    pcm24 = await _baseEngine.SynthesizeCloneAsync(
+                        text, _speakerEmbedding, QwenStyleMap.DefaultLanguage);
+                }
+                else
+                {
+                    if (_engine == null)
+                    {
+                        TTSLogger.LogError("[CharacterVoice.GenerateSpeech] No TTS engine on this voice.");
+                        return null;
+                    }
+
+                    string speaker = QwenStyleMap.SpeakerForGender(Gender);
+                    string instruct = QwenStyleMap.InstructFor(Pitch, Speed);
+                    pcm24 = await _engine.SynthesizeAsync(
+                        text, speaker, QwenStyleMap.DefaultLanguage, instruct);
+                }
 
                 if (pcm24 == null || pcm24.Length == 0)
                 {

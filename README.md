@@ -2,7 +2,7 @@
 
 Unity package for on-device text-to-speech. Public API (`CharacterVoiceFactory`, `CharacterVoice`) matches the original Spark-TTS Unity port.
 
-**`qwen3-tts` branch:** inference is [Qwen3-TTS 1.7B CustomVoice ONNX](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX), ported from [ElBruno.QwenTTS](https://github.com/elbruno/ElBruno.QwenTTS). Place weights locally — this package never downloads them. See **[QWEN3.md](QWEN3.md)**. Voice cloning (`CreateFromReference`) is not supported on CustomVoice.
+**`qwen3-tts` branch:** style TTS is [Qwen3-TTS 1.7B CustomVoice ONNX](https://huggingface.co/elbruno/Qwen3-TTS-12Hz-1.7B-CustomVoice-ONNX); voice cloning is [1.7B Base ONNX](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL). Place weights locally — this package never downloads them. See **[QWEN3.md](QWEN3.md)**.
 
 ## What is Spark-TTS?
 
@@ -75,7 +75,7 @@ Some dependencies require additional scoped registry configuration. Add the foll
 
 - On-device text-to-speech synthesis
 - Voice styling with adjustable gender, pitch, and speed
-- Voice cloning is not available on the Qwen3 CustomVoice backend (see QWEN3.md)
+- Voice cloning via `CreateFromReference` when 1.7B Base ONNX is present (see QWEN3.md)
 - Optimized for runtime performance
 - Simple API for integration into games and applications
 

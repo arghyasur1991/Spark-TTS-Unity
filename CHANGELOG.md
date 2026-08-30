@@ -10,13 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Style TTS now runs Qwen3-TTS 1.7B CustomVoice ONNX (ElBruno.QwenTTS port). `CharacterVoiceFactory` / `CharacterVoice` signatures are unchanged.
 - `GenerateSpeechAsync` still defaults to 16 kHz; native vocoder output is 24 kHz and is resampled.
+- `CreateFromReference` clones via Qwen3-TTS 1.7B **Base** ONNX (zukky single-file graph, x-vector / `--xvec-only`). CustomVoice still cannot clone.
 
 ### Added
-- Local 1.7B layout under `StreamingAssets/SparkTTS/Qwen3-1.7B/` (`QwenModelPaths`). No HuggingFace download.
-- Model Deployment Tool category for the Qwen3 1.7B file list.
-
-### Removed (this branch)
-- Voice cloning via `CreateFromReference` (CustomVoice has no speaker encoder). Returns null.
+- Local 1.7B CustomVoice layout under `StreamingAssets/SparkTTS/Qwen3-1.7B/` (`QwenModelPaths`). No HuggingFace download.
+- Local 1.7B Base layout under `StreamingAssets/SparkTTS/Qwen3-1.7B-Base/` (`QwenBaseModelPaths`) from [zukky/Qwen3-TTS-ONNX-DLL](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL). C# mel + speaker encoder; no Windows DLL.
+- Model Deployment Tool categories for CustomVoice and Base.
 
 ## [0.1.0] - 2025-05-17
 
