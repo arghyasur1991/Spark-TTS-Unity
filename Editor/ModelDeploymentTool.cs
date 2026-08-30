@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
+using SparkTTS.Qwen;
 
 namespace SparkTTS.Editor
 {
@@ -69,7 +70,7 @@ namespace SparkTTS.Editor
 
         private static List<ModelConfig> BuildQwen17BConfigs()
         {
-            const string dir = "SparkTTS/Qwen3-1.7B";
+            const string dir = "SparkTTS/" + QwenModelPaths.FolderName;
             var files = new[]
             {
                 "talker_prefill.onnx",
@@ -104,7 +105,7 @@ namespace SparkTTS.Editor
 
         private static List<ModelConfig> BuildQwen17BBaseConfigs()
         {
-            const string dir = "SparkTTS/Qwen3-1.7B-Base";
+            const string dir = "SparkTTS/" + QwenModelPaths.BaseFolderName;
             var files = new[]
             {
                 "talker_prefill.onnx",

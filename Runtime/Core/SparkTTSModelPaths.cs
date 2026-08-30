@@ -24,5 +24,18 @@ namespace SparkTTS.Core
         public const string MelSpectrogramModelName = "mel_spectrogram";
         public const string Wav2Vec2ModelName = "wav2vec2_model";
         public const string BiCodecEncoderQuantizerModelName = "bicodec_encoder_quantizer";
+
+        public const string QwenCustomVoiceFolder = "Qwen3-1.7B";
+        public const string QwenBaseFolder = "Qwen3-1.7B-Base";
+
+        public const string QwenTalkerPrefill = "talker_prefill";
+        public const string QwenTalkerDecode = "talker_decode";
+        public const string QwenCodePredictor = "code_predictor";
+        public const string QwenVocoder = "vocoder";
+        public const string QwenTextProject = "text_project";
+        public const string QwenCodecEmbed = "codec_embed";
+        public const string QwenCodePredictorEmbed = "code_predictor_embed";
+        public const string QwenSpeakerEncoder = "speaker_encoder";
+        public const string QwenTokenizer12HzDecode = "tokenizer12hz_decode";
     }
 } 

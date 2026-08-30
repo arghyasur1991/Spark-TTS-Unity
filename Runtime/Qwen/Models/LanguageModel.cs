@@ -5,28 +5,30 @@ using System;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Threading;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 
+using SparkTTS.Core;
+using SparkTTS.Models;
+using SparkTTS.Qwen;
+
 namespace SparkTTS.Qwen.Models
 {
 
 /// <summary>
-/// ONNX language model for Qwen3-TTS.
-/// Runs autoregressive inference with KV-cache to generate audio codes
-/// from tokenized text input.
+/// ONNX language model for Qwen3-TTS CustomVoice.
+/// Sessions are Spark ORTModel instances (QwenOnnxModel).
 /// </summary>
 internal sealed class LanguageModel : IDisposable
 {
     private readonly EmbeddingStore _embeddings;
-    private readonly string _modelDir;
-    private readonly Func<SessionOptions> _sessionOptionsFactory;
-    private readonly Lazy<InferenceSession> _prefillSession;
-    private readonly Lazy<InferenceSession> _decodeSession;
-    private readonly Lazy<InferenceSession> _cpSession;
+    private readonly QwenOnnxModel _prefill;
+    private readonly QwenOnnxModel _decode;
+    private readonly QwenOnnxModel _codePredictor;
+    private readonly QwenTokenSampler _sampler = new();
+    private int[] _suppressTokens;
 
     // Dimensions from config — set once after EmbeddingStore loads config.json
     private readonly int _hiddenSize;       // talker hidden_size (1024 for 0.6B, 2048 for 1.7B)
@@ -39,14 +41,13 @@ internal sealed class LanguageModel : IDisposable
     private readonly int _cpNumKvHeads;     // code_predictor num_key_value_heads
     private readonly int _cpHeadDim;        // code_predictor head_dim
 
-    public LanguageModel(string modelDir, EmbeddingStore embeddings, Func<SessionOptions> sessionOptionsFactory = null)
+    public LanguageModel(EmbeddingStore embeddings, ExecutionProvider executionProvider = ExecutionProvider.CPU)
     {
         _embeddings = embeddings;
-        _modelDir = modelDir;
-        _sessionOptionsFactory = sessionOptionsFactory ?? CreateDefaultOptions;
-        _prefillSession = CreateSessionLazy("talker_prefill.onnx");
-        _decodeSession = CreateSessionLazy("talker_decode.onnx");
-        _cpSession = CreateSessionLazy("code_predictor.onnx");
+        string folder = SparkTTSModelPaths.QwenCustomVoiceFolder;
+        _prefill = new QwenOnnxModel(SparkTTSModelPaths.QwenTalkerPrefill, folder, executionProvider);
+        _decode = new QwenOnnxModel(SparkTTSModelPaths.QwenTalkerDecode, folder, executionProvider);
+        _codePredictor = new QwenOnnxModel(SparkTTSModelPaths.QwenCodePredictor, folder, executionProvider);
 
         // Read dimensions from config.json (loaded by EmbeddingStore)
         var cfg = embeddings.Config;
@@ -59,38 +60,14 @@ internal sealed class LanguageModel : IDisposable
         _cpNumLayers = cfg.code_predictor.num_hidden_layers;
         _cpNumKvHeads = cfg.code_predictor.num_key_value_heads;
         _cpHeadDim = cfg.code_predictor.head_dim;
+        _suppressTokens = QwenTokenSampler.SuppressUpperCodec(cfg.talker.vocab_size, cfg.talker.codec_eos_token_id);
     }
 
-    private static SessionOptions CreateDefaultOptions() => new()
-    {
-        GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-        IntraOpNumThreads = Environment.ProcessorCount,
-        InterOpNumThreads = 1,
-        ExecutionMode = ExecutionMode.ORT_SEQUENTIAL,
-        EnableMemoryPattern = true,
-        EnableCpuMemArena = true
-    };
+    private InferenceSession GetPrefillSession() => _prefill.GetSession();
 
-    private Lazy<InferenceSession> CreateSessionLazy(string fileName) =>
-        new(() => CreateSession(fileName), LazyThreadSafetyMode.ExecutionAndPublication);
+    private InferenceSession GetDecodeSession() => _decode.GetSession();
 
-    private InferenceSession CreateSession(string fileName)
-    {
-        // SEC-3: File size pre-check to prevent out-of-memory attacks
-        var modelPath = Path.Combine(_modelDir, fileName);
-        var fileInfo = new FileInfo(modelPath);
-        const long maxOnnxSize = 8_000_000_000; // 8 GB (1.7B models are ~5.4 GB)
-        if (fileInfo.Length > maxOnnxSize)
-            throw new InvalidOperationException($"ONNX file too large ({fileInfo.Length / 1e9:F2} GB). Maximum allowed: {maxOnnxSize / 1e9:F2} GB.");
-
-        return new InferenceSession(modelPath, _sessionOptionsFactory());
-    }
-
-    private InferenceSession GetPrefillSession() => _prefillSession.Value;
-
-    private InferenceSession GetDecodeSession() => _decodeSession.Value;
-
-    private InferenceSession GetCpSession() => _cpSession.Value;
+    private InferenceSession GetCpSession() => _codePredictor.GetSession();
 
     public long[,,] Generate(int[] tokenIds, string speaker, string language,
                              int maxNewTokens = 2048, float temperature = 0.9f,
@@ -267,7 +244,9 @@ internal sealed class LanguageModel : IDisposable
                 }
 
                 // Sample group 0
-                var group0Token = SampleToken(logits, temperature, topK, topP, repetitionPenalty, generatedTokens, cfg);
+                var group0Token = _sampler.Sample(
+                    logits, cfg.talker.vocab_size, temperature, topK, topP,
+                    generatedTokens, repetitionPenalty, _suppressTokens);
                 if (group0Token == cfg.talker.codec_eos_token_id)
                     break;
 
@@ -326,14 +305,16 @@ internal sealed class LanguageModel : IDisposable
 
                         cancellationToken.ThrowIfCancellationRequested();
                         using var cpOutputs = GetCpSession().Run(cpInputsList);
-                        var cpLogits = cpOutputs.First(x => x.Name == "logits").AsEnumerable<float>().ToArray();
-                        var cpToken = SampleTokenSimple(cpLogits, temperature);
+                        var cpLogits = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(cpOutputs, "logits"));
+                        var cpToken = _sampler.Sample(
+                            cpLogits, cfg.code_predictor.vocab_size, temperature, 50, 1f,
+                            null, 1f, null);
                         codes[groupIdx] = cpToken;
 
                         // Update CP KV
                         cpPastLen += cpInputSeqLen;
-                        cpPastKeys = cpOutputs.First(x => x.Name == "present_keys").AsEnumerable<float>().ToArray();
-                        cpPastValues = cpOutputs.First(x => x.Name == "present_values").AsEnumerable<float>().ToArray();
+                        cpPastKeys = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(cpOutputs, "present_keys"));
+                        cpPastValues = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(cpOutputs, "present_values"));
 
                         // Next input
                         if (groupIdx < 15)
@@ -405,10 +386,10 @@ internal sealed class LanguageModel : IDisposable
 
                 cancellationToken.ThrowIfCancellationRequested();
                 using var decodeOutputs = GetDecodeSession().Run(decodeInputs);
-                logits = decodeOutputs.First(x => x.Name == "logits").AsEnumerable<float>().ToArray();
-                hiddenStates = decodeOutputs.First(x => x.Name == "hidden_states").AsEnumerable<float>().ToArray();
-                pastKeys = decodeOutputs.First(x => x.Name == "present_keys").AsEnumerable<float>().ToArray();
-                pastValues = decodeOutputs.First(x => x.Name == "present_values").AsEnumerable<float>().ToArray();
+                logits = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(decodeOutputs, "logits"));
+                hiddenStates = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(decodeOutputs, "hidden_states"));
+                pastKeys = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(decodeOutputs, "present_keys"));
+                pastValues = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(decodeOutputs, "present_values"));
             }
         }
         finally
@@ -672,8 +653,8 @@ internal sealed class LanguageModel : IDisposable
 
         for (int layer = 0; layer < _numLayers; layer++)
         {
-            var keyData = outputs.First(x => x.Name == $"present_key_{layer}").AsEnumerable<float>().ToArray();
-            var valueData = outputs.First(x => x.Name == $"present_value_{layer}").AsEnumerable<float>().ToArray();
+            var keyData = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(outputs, $"present_key_{layer}"));
+            var valueData = QwenOnnxModel.CopyFloat(QwenOnnxModel.FindNamed(outputs, $"present_value_{layer}"));
             
             Array.Copy(keyData, 0, keys, layer * 1 * _numKvHeads * seqLen * _headDim, keyData.Length);
             Array.Copy(valueData, 0, values, layer * 1 * _numKvHeads * seqLen * _headDim, valueData.Length);
@@ -705,151 +686,6 @@ internal sealed class LanguageModel : IDisposable
     {
         // Empty KV for CP prefill: (_cpNumLayers, 1, _cpNumKvHeads, 0, _cpHeadDim)
         return (Array.Empty<float>(), Array.Empty<float>());
-    }
-
-    private int SampleToken(float[] logits, float temperature, int topK, float topP, float repPenalty,
-                            List<int> previousTokens, ModelConfig cfg)
-    {
-        // Logits are (1, 1, 3072), flatten to (3072,)
-        var vocabSize = cfg.talker.vocab_size;
-        var probs = ArrayPool<float>.Shared.Rent(vocabSize);
-        
-        try
-        {
-            Array.Copy(logits, logits.Length - vocabSize, probs, 0, vocabSize);
-
-            // Apply repetition penalty (positive logits → divide, negative → multiply)
-            foreach (var token in previousTokens)
-            {
-                if (probs[token] > 0)
-                    probs[token] /= repPenalty;
-                else
-                    probs[token] *= repPenalty;
-            }
-
-            // Suppress upper codec range except codec_eos_token_id
-            int cpVocabSize = cfg.code_predictor.vocab_size;
-            for (int i = cpVocabSize; i < vocabSize; i++)
-            {
-                if (i != cfg.talker.codec_eos_token_id)
-                    probs[i] = float.NegativeInfinity;
-            }
-
-            // Temperature
-            if (temperature > 0)
-            {
-                for (int i = 0; i < vocabSize; i++)
-                    probs[i] /= temperature;
-            }
-
-            // Top-k
-            if (topK > 0 && topK < vocabSize)
-            {
-                var indexed = probs.AsSpan(0, vocabSize).ToArray().Select((p, i) => (p, i)).OrderByDescending(x => x.p).ToArray();
-                for (int i = topK; i < vocabSize; i++)
-                    probs[indexed[i].i] = float.NegativeInfinity;
-            }
-
-            // Softmax
-            float maxLogit = float.NegativeInfinity;
-            for (int i = 0; i < vocabSize; i++)
-            {
-                if (probs[i] > maxLogit) maxLogit = probs[i];
-            }
-            float sumExp = 0;
-            for (int i = 0; i < vocabSize; i++)
-            {
-                probs[i] = MathF.Exp(probs[i] - maxLogit);
-                sumExp += probs[i];
-            }
-            for (int i = 0; i < vocabSize; i++)
-                probs[i] /= sumExp;
-
-            // Multinomial sample
-            float rand = (float)new System.Random().NextDouble();
-            float cumSum = 0;
-            for (int i = 0; i < vocabSize; i++)
-            {
-                cumSum += probs[i];
-                if (rand < cumSum)
-                    return i;
-            }
-
-            return vocabSize - 1;
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(probs);
-        }
-    }
-
-    private int SampleTokenSimple(float[] logits, float temperature, int topK = 50)
-    {
-        var vocabSize = _embeddings.Config.code_predictor.vocab_size;
-        var probs = ArrayPool<float>.Shared.Rent(vocabSize);
-        
-        try
-        {
-            Array.Copy(logits, logits.Length - vocabSize, probs, 0, vocabSize);
-
-            // Top-k filtering (subtalker_top_k=50 from Python generation_config.json)
-            if (topK > 0 && topK < vocabSize)
-            {
-                var sorted = ArrayPool<float>.Shared.Rent(vocabSize);
-                try
-                {
-                    Array.Copy(probs, 0, sorted, 0, vocabSize);
-                    Array.Sort(sorted, 0, vocabSize);
-                    float threshold = sorted[vocabSize - topK];
-                    for (int i = 0; i < vocabSize; i++)
-                    {
-                        if (probs[i] < threshold)
-                            probs[i] = float.NegativeInfinity;
-                    }
-                }
-                finally
-                {
-                    ArrayPool<float>.Shared.Return(sorted);
-                }
-            }
-
-            if (temperature > 0)
-            {
-                for (int i = 0; i < vocabSize; i++)
-                    probs[i] /= temperature;
-            }
-
-            // Softmax
-            float maxLogit = float.NegativeInfinity;
-            for (int i = 0; i < vocabSize; i++)
-            {
-                if (probs[i] > maxLogit) maxLogit = probs[i];
-            }
-            float sumExp = 0;
-            for (int i = 0; i < vocabSize; i++)
-            {
-                probs[i] = MathF.Exp(probs[i] - maxLogit);
-                sumExp += probs[i];
-            }
-            for (int i = 0; i < vocabSize; i++)
-                probs[i] /= sumExp;
-
-            // Sample
-            float rand = (float)new System.Random().NextDouble();
-            float cumSum = 0;
-            for (int i = 0; i < vocabSize; i++)
-            {
-                cumSum += probs[i];
-                if (rand < cumSum)
-                    return i;
-            }
-
-            return vocabSize - 1;
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(probs);
-        }
     }
 
     /// <summary>
@@ -887,15 +723,9 @@ internal sealed class LanguageModel : IDisposable
 
     public void Dispose()
     {
-        DisposeSession(_prefillSession);
-        DisposeSession(_decodeSession);
-        DisposeSession(_cpSession);
-    }
-
-    private static void DisposeSession(Lazy<InferenceSession> session)
-    {
-        if (session.IsValueCreated)
-            session.Value.Dispose();
+        _prefill.Dispose();
+        _decode.Dispose();
+        _codePredictor.Dispose();
     }
 }
 }

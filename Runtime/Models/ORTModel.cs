@@ -142,7 +142,8 @@ namespace SparkTTS.Models
             string modelFolder, 
             bool preAllocateOutputs = false,
             Precision precision = Precision.FP32,
-            ExecutionProvider executionProvider = ExecutionProvider.CPU)
+            ExecutionProvider executionProvider = ExecutionProvider.CPU,
+            bool deferLoad = false)
         {
             if (string.IsNullOrEmpty(modelName))
                 throw new ArgumentNullException(nameof(modelName));
@@ -169,6 +170,10 @@ namespace SparkTTS.Models
                 MemoryUsage.Optimal => ModelLoadPolicy.OnDemand,
                 _ => ModelLoadPolicy.OnDemandKeepAlive
             };
+
+            // Multi-GB talker graphs must not all load at factory init even in Performance mode.
+            if (deferLoad && _loadPolicy == ModelLoadPolicy.OnStartup)
+                _loadPolicy = ModelLoadPolicy.OnDemandKeepAlive;
             
             // Start loading immediately in Performance mode
             if (_loadPolicy == ModelLoadPolicy.OnStartup)
@@ -240,6 +245,20 @@ namespace SparkTTS.Models
                 throw new ArgumentOutOfRangeException(nameof(index), $"Index must be between 0 and {_inputNames.Count - 1}");
                 
             _inputs.Add(NamedOnnxValue.CreateFromTensor(_inputNames[index], inputTensor));
+        }
+
+        /// <summary>
+        /// Loads a tensor by ONNX input name (graph order is not required).
+        /// </summary>
+        public async Task LoadInput<T>(string name, Tensor<T> inputTensor)
+        {
+            if (string.IsNullOrEmpty(name))
+                throw new ArgumentNullException(nameof(name));
+            if (inputTensor == null)
+                throw new ArgumentNullException(nameof(inputTensor));
+
+            await _loadTask;
+            _inputs.Add(NamedOnnxValue.CreateFromTensor(name, inputTensor));
         }
 
         /// <summary>
@@ -506,11 +525,49 @@ namespace SparkTTS.Models
         {
             var options = new SessionOptions
             {
-                LogSeverityLevel = _ortLogLevel
+                LogSeverityLevel = _ortLogLevel,
+                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL
             };
             
             return options;
         }
+
+        /// <summary>
+        /// Blocks until the session is loaded. Safe from a worker thread; the load task
+        /// does not marshal back to the Unity sync context.
+        /// </summary>
+        protected void EnsureLoaded()
+        {
+            StartLoadingAsync();
+            if (_loadTask != null && !_loadTask.IsCompleted)
+                _loadTask.GetAwaiter().GetResult();
+            if (_session == null)
+                throw new InvalidOperationException($"[{_config.ModelName}] Session failed to load.");
+        }
+
+        /// <summary>Loaded session. Call EnsureLoaded first.</summary>
+        protected InferenceSession Session
+        {
+            get
+            {
+                if (_session == null)
+                    throw new InvalidOperationException($"[{_config.ModelName}] Session is not loaded.");
+                return _session;
+            }
+        }
+
+        protected IReadOnlyList<string> InputNames
+        {
+            get
+            {
+                EnsureLoaded();
+                return _inputNames;
+            }
+        }
+
+        protected string ModelName => _config.ModelName;
+
+        protected string ModelFilePath => GetModelPath(_config.ModelName);
 
         /// <summary>
         /// Sets the logging parameter context for ONNX Runtime operations.

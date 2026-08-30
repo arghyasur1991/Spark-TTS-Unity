@@ -64,7 +64,7 @@ From [zukky/Qwen3-TTS-ONNX-DLL](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL)
 2. Copy `dist/dll_release/models/Qwen3-TTS-12Hz-1.7B-Base/{config.json,vocab.json,merges.txt}` next to them (or into a `tokenizer/` subfolder for the vocab/merges pair).
 3. Skip `qwen3_tts_rust.dll`, `qwen3_tts.h`, and `tokenizer12hz_encode.onnx` (encode is ICL-only; Spark’s clone API has no reference transcript).
 
-`QwenBaseModelPaths.IsPresent()` / `GetMissingFiles()` are the runtime checklist. `CharacterVoiceFactory.IsReady` is true when **either** CustomVoice **or** Base is complete.
+`QwenModelPaths.IsCustomVoicePresent()` / `IsBasePresent()` / `GetMissingBaseFiles()` are the runtime checklist. `CharacterVoiceFactory.IsReady` is true when **either** CustomVoice **or** Base is complete.
 
 `SparkTTS/Model Deployment Tool` has **Include Qwen3-TTS 1.7B CustomVoice** and **Include Qwen3-TTS 1.7B Base (clone)** toggles. Base is off by default so a CustomVoice-only copy still deploys.
 
@@ -77,9 +77,13 @@ From [zukky/Qwen3-TTS-ONNX-DLL](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL)
 | `GenerateSpeechAsync(text, sampleRate)` | Talker + vocoder at **24 kHz**, then resample to `sampleRate` (default **16000**) |
 | `CreateFromFolderAsync` | Reloads `voice_config.json` style knobs only (CustomVoice) |
 
-Use **CPU** `ExecutionProvider`. CoreML/CUDA arguments are accepted on `Initialize` and ignored.
+`Initialize` passes `ExecutionProvider` into Spark `ORTModel` (same CPU / CUDA / CoreML path as the original Spark graphs). Default is **CPU**. CoreML still has a known load NRE on some machines — prefer CPU until that is fixed in `ORTModel`.
 
-`WaitForModelsLoadedAsync` loads CustomVoice embeddings / Base tokenizer. Large ONNX sessions stay lazy until the first generate or clone extract.
+Every Qwen ONNX file is an `ORTModel` (`QwenOnnxModel` or a named subclass). Sessions defer-load (the 5–14 GB talkers must not all open at factory init). The decode loop is synchronous `Session.Run` after `EnsureLoaded` — do not wrap each token in `Task.Run` / `RunDisposable`. Sampling matches Spark `LLMModel`: reused buffers, min-heap top-K, `ThreadLocal<Random>`, `DenseTensor.Buffer.ToArray()`.
+
+CustomVoice (npy embeddings + `position_ids`) and Base (ONNX embeddings, no `position_ids`) keep **two generate loops** — the graphs are not drop-in. One engine (`QwenTtsEngine`), one vocoder class, one sampler, one path class.
+
+`WaitForModelsLoadedAsync` constructs the engine (tokenizer / embeddings). Large ONNX sessions stay deferred until the first generate or clone extract.
 
 ## Clone notes
 

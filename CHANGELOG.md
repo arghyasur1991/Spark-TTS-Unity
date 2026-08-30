@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Local 1.7B CustomVoice layout under `StreamingAssets/SparkTTS/Qwen3-1.7B/` (`QwenModelPaths`). No HuggingFace download.
-- Local 1.7B Base layout under `StreamingAssets/SparkTTS/Qwen3-1.7B-Base/` (`QwenBaseModelPaths`) from [zukky/Qwen3-TTS-ONNX-DLL](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL). C# mel + speaker encoder; no Windows DLL.
+- Local 1.7B Base layout under `StreamingAssets/SparkTTS/Qwen3-1.7B-Base/` (`QwenModelPaths`) from [zukky/Qwen3-TTS-ONNX-DLL](https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL). C# mel + speaker encoder; no Windows DLL.
 - Model Deployment Tool categories for CustomVoice and Base.
+- Qwen ONNX graphs load through Spark `ORTModel` (`QwenOnnxModel`). Shared `QwenTokenSampler` / `QwenVocoderModel` / one `QwenTtsEngine`. Decode uses Spark LLM-style buffer reuse; sessions defer-load.
 
 ## [0.1.0] - 2025-05-17
 
