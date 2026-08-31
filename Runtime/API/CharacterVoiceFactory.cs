@@ -27,11 +27,31 @@ namespace SparkTTS
         /// </summary>
         public static bool HasEngine => Instance._engine != null && !Instance._disposed;
 
+        static bool _keepAcrossReload;
+
         /// <summary>
         /// When true, editor domain reload detaches native ONNX sessions instead
         /// of OrtReleaseSession so the next domain can wrap them. Set from the host.
+        /// Persisted in a per-process file so stash still runs if the static was reset.
         /// </summary>
-        public static bool KeepNativeSessionsAcrossReload { get; set; }
+        public static bool KeepNativeSessionsAcrossReload
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return _keepAcrossReload || NativeSessionKeepAlive.KeepRequested;
+#else
+                return _keepAcrossReload;
+#endif
+            }
+            set
+            {
+                _keepAcrossReload = value;
+#if UNITY_EDITOR
+                NativeSessionKeepAlive.SetKeepRequested(value);
+#endif
+            }
+        }
 
         /// <summary>
         /// Gets whether the factory is initialized and ready for use.
@@ -245,20 +265,8 @@ namespace SparkTTS
                 if (_engine != null)
                     return;
 #if UNITY_EDITOR
-                var pending = NativeSessionKeepAlive.TakePending();
-                if (pending != null && pending.Count > 0)
-                {
-                    _engine = new QwenTtsEngine(ep);
-                    _engine.AdoptNativeSessions(pending);
-                    foreach (var leftover in pending.Values)
-                    {
-                        leftover.Dispose();
-                    }
-                    TTSLogger.Log(
-                        $"[CharacterVoiceFactory] Adopted {(_engine.HasCustomVoice ? "style" : "")}" +
-                        $"{(_engine.HasClone ? " clone" : "")} ONNX sessions after domain reload");
+                if (TryApplyPendingSessions(ep))
                     return;
-                }
 #endif
                 _engine = new QwenTtsEngine(ep);
                 TTSLogger.LogVerbose(
@@ -267,6 +275,34 @@ namespace SparkTTS
             });
             return _engineTask;
         }
+
+#if UNITY_EDITOR
+        static bool TryApplyPendingSessions(ExecutionProvider ep)
+        {
+            if (Instance._engine != null)
+                return true;
+            if (!NativeSessionKeepAlive.HasPending)
+                return false;
+            var pending = NativeSessionKeepAlive.TakePending();
+            if (pending == null || pending.Count == 0)
+                return false;
+
+            int offered = pending.Count;
+            Instance._disposed = false;
+            Instance._engine = new QwenTtsEngine(ep);
+            Instance._engine.AdoptNativeSessions(pending);
+            int leftover = pending.Count;
+            foreach (var leftoverSession in pending.Values)
+            {
+                try { leftoverSession.Dispose(); }
+                catch (Exception ex) { TTSLogger.LogWarning("[CharacterVoiceFactory] leftover session: " + ex.Message); }
+            }
+
+            TTSLogger.Log(
+                $"[CharacterVoiceFactory] Adopted {offered - leftover}/{offered} ONNX sessions after domain reload");
+            return true;
+        }
+#endif
 
         /// <summary>
         /// Drops loaded ONNX sessions and embeddings. Next create/speak reconstructs them.
@@ -327,12 +363,13 @@ namespace SparkTTS
         }
 
         /// <summary>
-        /// Wrap stashed native sessions after a domain reload. Engine construct
-        /// adopts them on the next <see cref="WaitForModelsLoadedAsync"/>.
+        /// Wrap stashed native sessions and rebuild the engine immediately so
+        /// HasEngine is true (Call Studio does not show unloaded).
         /// </summary>
         public static void TryRestoreNativeAfterReload()
         {
             NativeSessionKeepAlive.TryRestore();
+            TryApplyPendingSessions(Instance._executionProvider);
         }
 #endif
 
@@ -352,6 +389,13 @@ namespace SparkTTS
 
         ~CharacterVoiceFactory()
         {
+#if UNITY_EDITOR
+            if (KeepNativeSessionsAcrossReload)
+            {
+                _engine = null;
+                return;
+            }
+#endif
             Dispose();
         }
     }

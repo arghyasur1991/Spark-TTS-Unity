@@ -245,7 +245,7 @@ namespace SparkTTS.Qwen
                 {
                     model.AdoptSession(session);
                     sessions.Remove(model.SessionKeepAliveKey);
-                    TTSLogger.LogVerbose("[QwenTtsEngine] Adopted " + model.SessionKeepAliveKey);
+                    TTSLogger.Log("[QwenTtsEngine] Adopted " + model.SessionKeepAliveKey);
                 }
             }
         }

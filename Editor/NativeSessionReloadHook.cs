@@ -12,6 +12,7 @@ namespace SparkTTS.Editor
         static NativeSessionReloadHook()
         {
             AssemblyReloadEvents.beforeAssemblyReload += CharacterVoiceFactory.StashNativeForReload;
+            AssemblyReloadEvents.afterAssemblyReload += CharacterVoiceFactory.TryRestoreNativeAfterReload;
             CharacterVoiceFactory.TryRestoreNativeAfterReload();
         }
     }

@@ -39,6 +39,32 @@ namespace SparkTTS.Utils
         static Dictionary<string, InferenceSession> _pending;
         static bool _envInstalled;
 
+        internal static bool HasPending => _pending != null && _pending.Count > 0;
+
+        internal static void SetKeepRequested(bool value)
+        {
+            try
+            {
+                if (value)
+                    File.WriteAllText(KeepFlagPath(), "1");
+                else if (File.Exists(KeepFlagPath()))
+                    File.Delete(KeepFlagPath());
+            }
+            catch (Exception ex)
+            {
+                TTSLogger.LogWarning("[SparkTTS] Keep-alive flag: " + ex.Message);
+            }
+        }
+
+        internal static bool KeepRequested
+        {
+            get
+            {
+                try { return File.Exists(KeepFlagPath()); }
+                catch { return false; }
+            }
+        }
+
         internal static Dictionary<string, InferenceSession> TakePending()
         {
             var p = _pending;
@@ -65,8 +91,6 @@ namespace SparkTTS.Utils
             var handle = (IntPtr)SessionHandleField.GetValue(session);
             SessionHandleField.SetValue(session, IntPtr.Zero);
             GC.SuppressFinalize(session);
-            try { session.Dispose(); }
-            catch { /* handle already detached */ }
             return handle;
         }
 
@@ -106,6 +130,8 @@ namespace SparkTTS.Utils
 
             File.WriteAllText(TokenPath(), blob.ToInt64().ToString());
             TTSLogger.Log($"[SparkTTS] Stashed {sessions.Count} ONNX session(s) across domain reload.");
+            for (int i = 0; i < sessions.Count; i++)
+                TTSLogger.LogVerbose("[SparkTTS] stash " + sessions[i].key);
         }
 
         internal static bool TryRestore()
@@ -186,9 +212,10 @@ namespace SparkTTS.Utils
 
             if (OrtEnv.IsCreated)
             {
-                TTSLogger.LogWarning("[SparkTTS] OrtEnv already created; keep-alive will reuse native sessions on that env.");
-                _envInstalled = true;
-                return true;
+                TTSLogger.LogError(
+                    "[SparkTTS] OrtEnv already created before keep-alive restore; " +
+                    "stashed sessions belong to a different env and will not be adopted.");
+                return false;
             }
 
             var env = (OrtEnv)OrtEnvCtor.Invoke(new object[]
@@ -219,6 +246,12 @@ namespace SparkTTS.Utils
             SessionDisposedField?.SetValue(session, false);
             InitWithHandle.Invoke(session, new object[] { nativeHandle });
             return session;
+        }
+
+        static string KeepFlagPath()
+        {
+            return Path.Combine(Path.GetTempPath(),
+                "SparkTTS-QwenKeepAlive-" + Process.GetCurrentProcess().Id + ".keep");
         }
 
         static string TokenPath()
