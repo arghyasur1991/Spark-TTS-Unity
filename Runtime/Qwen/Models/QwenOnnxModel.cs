@@ -24,7 +24,7 @@ namespace SparkTTS.Qwen.Models
         public new void EnsureLoaded()
         {
             string path = ModelFilePath;
-            var info = new FileInfo(path);
+            var info = new FileInfo(path); 
             if (info.Exists && info.Length > MaxOnnxBytes)
                 throw new InvalidOperationException($"ONNX file too large ({info.Length / 1e9:F2} GB): {path}");
             base.EnsureLoaded();

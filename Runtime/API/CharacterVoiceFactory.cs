@@ -23,9 +23,22 @@ namespace SparkTTS
         }
 
         /// <summary>
-        /// True after embeddings/tokenizers are constructed (ONNX sessions may still be deferred).
+        /// True after embeddings/tokenizers are constructed (ONNX sessions may still be deferred),
+        /// or editor keep-alive has wrapped native sessions that are waiting to be adopted.
         /// </summary>
-        public static bool HasEngine => Instance._engine != null && !Instance._disposed;
+        public static bool HasEngine
+        {
+            get
+            {
+                if (Instance._engine != null && !Instance._disposed)
+                    return true;
+#if UNITY_EDITOR
+                return NativeSessionKeepAlive.HasPending;
+#else
+                return false;
+#endif
+            }
+        }
 
         static bool _keepAcrossReload;
 
@@ -363,13 +376,19 @@ namespace SparkTTS
         }
 
         /// <summary>
-        /// Wrap stashed native sessions and rebuild the engine immediately so
-        /// HasEngine is true (Call Studio does not show unloaded).
+        /// Wrap stashed native sessions. Engine reconstruct (1.5 GB embeddings +
+        /// projection tables) runs on the thread pool so InitializeOnLoad / Play
+        /// domain reload does not block for minutes. ONNX graphs are already native.
         /// </summary>
         public static void TryRestoreNativeAfterReload()
         {
             NativeSessionKeepAlive.TryRestore();
-            TryApplyPendingSessions(Instance._executionProvider);
+            if (!NativeSessionKeepAlive.HasPending && Instance._engine == null)
+                return;
+            TTSLogger.Log(
+                "[CharacterVoiceFactory] Native ONNX sessions restored; " +
+                "loading embeddings off the main thread");
+            Instance.EnsureEngineAsync();
         }
 #endif
 

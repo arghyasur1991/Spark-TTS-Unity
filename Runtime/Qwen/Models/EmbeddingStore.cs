@@ -3,7 +3,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 
 namespace SparkTTS.Qwen.Models
@@ -118,34 +120,38 @@ internal sealed class EmbeddingStore : IDisposable
 
             // Pre-compute projected embedding tables to avoid per-step matrix-vector multiplies
             int projOutDim = _cpProjectionWeight.GetLength(0);
-            var tempInput = new float[_cpProjectionWeight.GetLength(1)];
-            var tempOutput = new float[projOutDim];
+            int projInDim = _cpProjectionWeight.GetLength(1);
 
             _projectedCpCodecEmbeddings = new float[15][,];
-            for (int g = 0; g < 15; g++)
+            Parallel.For(0, 15, g =>
             {
                 int vocab = _cpCodecEmbeddings[g].GetLength(0);
-                _projectedCpCodecEmbeddings[g] = new float[vocab, projOutDim];
+                var table = new float[vocab, projOutDim];
+                var tempInput = new float[projInDim];
+                var tempOutput = new float[projOutDim];
                 for (int t = 0; t < vocab; t++)
                 {
                     for (int j = 0; j < _cpHiddenSize; j++)
                         tempInput[j] = _cpCodecEmbeddings[g][t, j];
                     CpProjection(tempInput, tempOutput);
                     for (int j = 0; j < projOutDim; j++)
-                        _projectedCpCodecEmbeddings[g][t, j] = tempOutput[j];
+                        table[t, j] = tempOutput[j];
                 }
-            }
+                _projectedCpCodecEmbeddings[g] = table;
+            });
 
             int talkerVocab = _talkerCodecEmbedding.GetLength(0);
             _projectedTalkerCodecEmbedding = new float[talkerVocab, projOutDim];
-            for (int t = 0; t < talkerVocab; t++)
+            Parallel.For(0, talkerVocab, t =>
             {
+                var tempInput = new float[projInDim];
+                var tempOutput = new float[projOutDim];
                 for (int j = 0; j < _hiddenSize; j++)
                     tempInput[j] = _talkerCodecEmbedding[t, j];
                 CpProjection(tempInput, tempOutput);
                 for (int j = 0; j < projOutDim; j++)
                     _projectedTalkerCodecEmbedding[t, j] = tempOutput[j];
-            }
+            });
         }
         else
         {

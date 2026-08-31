@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using SparkTTS.Models;
@@ -47,12 +48,14 @@ namespace SparkTTS.Qwen
 
             if (style)
             {
+                var sw = Stopwatch.StartNew();
                 var embeddingsDir = System.IO.Path.Combine(QwenModelPaths.Root, "embeddings");
                 _styleTokenizer = new TextTokenizer(System.IO.Path.Combine(QwenModelPaths.Root, "tokenizer"));
                 _embeddings = new EmbeddingStore(embeddingsDir, System.IO.Path.Combine(embeddingsDir, "config.json"));
                 _languageModel = new LanguageModel(_embeddings, executionProvider);
                 _styleVocoder = QwenVocoderModel.CustomVoice(executionProvider);
-                TTSLogger.Log($"[QwenTtsEngine] CustomVoice embeddings from {QwenModelPaths.Root}");
+                TTSLogger.Log(
+                    $"[QwenTtsEngine] CustomVoice embeddings from {QwenModelPaths.Root} in {sw.ElapsedMilliseconds}ms");
             }
 
             if (clone)
