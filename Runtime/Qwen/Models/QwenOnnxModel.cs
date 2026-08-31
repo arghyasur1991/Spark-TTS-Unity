@@ -62,11 +62,6 @@ namespace SparkTTS.Qwen.Models
 
         public InferenceSession GetSession()
         {
-            lock (NativeLifetimeGate)
-            {
-                if (HasLoadedSession)
-                    return Session;
-            }
             EnsureLoaded();
             return Session;
         }

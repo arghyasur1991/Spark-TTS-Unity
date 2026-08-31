@@ -4,14 +4,12 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Threading;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using SparkTTS.Core;
 using SparkTTS.Models;
 using SparkTTS.Qwen.Models;
-using TTSLogger = SparkTTS.Utils.Logger;
 
 namespace SparkTTS.Qwen
 {
@@ -251,27 +249,13 @@ namespace SparkTTS.Qwen
 
         internal void PreloadSessions()
         {
-            var sw = Stopwatch.StartNew();
             _textProject.GetSession();
-            TTSLogger.Log($"[QwenBaseTalker] text_project {sw.ElapsedMilliseconds}ms");
-            sw.Restart();
             _codecEmbed.GetSession();
-            TTSLogger.Log($"[QwenBaseTalker] codec_embed {sw.ElapsedMilliseconds}ms");
-            sw.Restart();
             _cpEmbed.GetSession();
-            TTSLogger.Log($"[QwenBaseTalker] code_predictor_embed {sw.ElapsedMilliseconds}ms");
-            sw.Restart();
             _prefill.GetSession();
-            TTSLogger.Log($"[QwenBaseTalker] talker_prefill {sw.ElapsedMilliseconds}ms");
-            sw.Restart();
             _decode.GetSession();
-            TTSLogger.Log($"[QwenBaseTalker] talker_decode {sw.ElapsedMilliseconds}ms");
-            sw.Restart();
             _codePredictor.GetSession();
-            TTSLogger.Log($"[QwenBaseTalker] code_predictor {sw.ElapsedMilliseconds}ms");
-            sw.Restart();
             _vocoder.GetSession();
-            TTSLogger.Log($"[QwenBaseTalker] vocoder {sw.ElapsedMilliseconds}ms");
         }
 
         public void Dispose()

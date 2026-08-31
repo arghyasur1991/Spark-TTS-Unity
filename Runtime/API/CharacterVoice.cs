@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
@@ -126,8 +125,7 @@ namespace SparkTTS
 
             try
             {
-                var sw = Stopwatch.StartNew();
-                TTSLogger.Log($"[CharacterVoice.GenerateSpeech] start chars={text.Length}");
+                TTSLogger.Log($"[CharacterVoice.GenerateSpeech] Generating speech for text: {text}");
 
                 if (_engine == null)
                 {
@@ -152,7 +150,6 @@ namespace SparkTTS
                     pcm24 = await BackgroundWork.Run(
                         () => _engine.Synthesize(text, speaker, QwenStyleMap.DefaultLanguage, instruct));
                 }
-                TTSLogger.Log($"[CharacterVoice.GenerateSpeech] synth {sw.ElapsedMilliseconds}ms samples={pcm24?.Length ?? 0}");
 
                 if (pcm24 == null || pcm24.Length == 0)
                 {
