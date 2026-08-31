@@ -133,6 +133,11 @@ namespace SparkTTS
                     return null;
                 }
 
+                if (_speakerEmbedding != null)
+                    await _engine.PreloadCloneAsync();
+                else
+                    await _engine.PreloadStyleAsync();
+
                 float[] pcm24;
                 if (_speakerEmbedding != null)
                 {

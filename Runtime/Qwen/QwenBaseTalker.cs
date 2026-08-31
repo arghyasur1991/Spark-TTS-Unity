@@ -236,6 +236,17 @@ namespace SparkTTS.Qwen
             return _vocoder.Decode(codes, cancellationToken);
         }
 
+        internal void PreloadSessions()
+        {
+            _textProject.GetSession();
+            _codecEmbed.GetSession();
+            _cpEmbed.GetSession();
+            _prefill.GetSession();
+            _decode.GetSession();
+            _codePredictor.GetSession();
+            _vocoder.GetSession();
+        }
+
         public void Dispose()
         {
             if (_disposed)

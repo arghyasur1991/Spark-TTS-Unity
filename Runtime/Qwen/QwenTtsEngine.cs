@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using SparkTTS.Models;
 using SparkTTS.Qwen.Models;
+using SparkTTS.Utils;
 using UnityEngine;
 using TTSLogger = SparkTTS.Utils.Logger;
 
@@ -88,7 +89,7 @@ namespace SparkTTS.Qwen
         public Task<float[]> SynthesizeAsync(string text, string speaker, string language, string instruct,
             CancellationToken cancellationToken = default)
         {
-            return Task.Run(() => Synthesize(text, speaker, language, instruct, cancellationToken), cancellationToken);
+            return BackgroundWork.Run(() => Synthesize(text, speaker, language, instruct, cancellationToken));
         }
 
         public float[] ExtractSpeakerEmbedding(float[] samples24k)
@@ -136,9 +137,42 @@ namespace SparkTTS.Qwen
         public Task<float[]> SynthesizeCloneAsync(string text, float[] speakerEmbedding, string language,
             CancellationToken cancellationToken = default)
         {
-            return Task.Run(
-                () => SynthesizeClone(text, speakerEmbedding, language, cancellationToken),
-                cancellationToken);
+            return BackgroundWork.Run(
+                () => SynthesizeClone(text, speakerEmbedding, language, cancellationToken));
+        }
+
+        /// <summary>
+        /// Opens CustomVoice ONNX sessions on a worker thread. Safe to call from the main thread.
+        /// </summary>
+        public Task PreloadStyleAsync()
+        {
+            if (_languageModel == null)
+                return Task.CompletedTask;
+            return BackgroundWork.Run(() =>
+            {
+                lock (_gate)
+                {
+                    _languageModel.PreloadSessions();
+                    _styleVocoder.GetSession();
+                }
+            });
+        }
+
+        /// <summary>
+        /// Opens Base clone ONNX sessions on a worker thread. Safe to call from the main thread.
+        /// </summary>
+        public Task PreloadCloneAsync()
+        {
+            if (_talker == null)
+                return Task.CompletedTask;
+            return BackgroundWork.Run(() =>
+            {
+                lock (_gate)
+                {
+                    _talker.PreloadSessions();
+                    _speakerEncoder.GetSession();
+                }
+            });
         }
 
         public static float[] ClipToMono24k(AudioClip clip)

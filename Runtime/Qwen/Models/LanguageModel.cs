@@ -721,6 +721,13 @@ internal sealed class LanguageModel : IDisposable
             nextInputBuf[i] += cpEmbed[i];
     }
 
+    internal void PreloadSessions()
+    {
+        GetPrefillSession();
+        GetDecodeSession();
+        GetCpSession();
+    }
+
     public void Dispose()
     {
         _prefill.Dispose();

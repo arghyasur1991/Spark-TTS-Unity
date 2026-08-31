@@ -208,8 +208,7 @@ namespace SparkTTS.Models
             if (IsInitialized || _loadTask != null)
                 return;
             _disposed = false;
-            _loadTask = LoadModelAsync();
-            _loadTask.Start();
+            _loadTask = BackgroundWork.Run(LoadSession);
         }
 
         public async Task<T> RunAsync<T>(Func<Task<T>> func, bool standaloneLoading = true)
@@ -533,8 +532,9 @@ namespace SparkTTS.Models
         }
 
         /// <summary>
-        /// Blocks until the session is loaded. Safe from a worker thread; the load task
-        /// does not marshal back to the Unity sync context.
+        /// Blocks until the session is loaded. Call from a worker thread (or after
+        /// <see cref="StartLoadingAsync"/> has finished). Loading uses
+        /// <see cref="TaskScheduler.Default"/> so it does not run on the Unity main thread.
         /// </summary>
         protected void EnsureLoaded()
         {
@@ -594,73 +594,68 @@ namespace SparkTTS.Models
         /// Asynchronously loads the ONNX model and initializes input/output metadata.
         /// </summary>
         /// <returns>A task containing the loaded InferenceSession</returns>
-        private Task<InferenceSession> LoadModelAsync()
+        private InferenceSession LoadSession()
         {
-            return new Task<InferenceSession>(() =>
+            string modelPath = GetModelPath(_config.ModelName);
+            if (!File.Exists(modelPath))
             {
-                string modelPath = GetModelPath(_config.ModelName);
-                if (!File.Exists(modelPath))
+                Logger.LogError($"[{_config.ModelName}] Model file not found: {modelPath}");
+                throw new FileNotFoundException($"Model file not found: {modelPath}");
+            }
+            Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName}");
+
+            try
+            {
+                var options = CreateSessionOptions();
+
+                if (_config.ExecutionProvider == ExecutionProvider.CoreML)
                 {
-                    Logger.LogError($"[{_config.ModelName}] Model file not found: {modelPath}");
-                    throw new FileNotFoundException($"Model file not found: {modelPath}");
+                    LoadModelWithCoreML(modelPath, options);
                 }
-                Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName}");
-
-                try
+                else if (_config.ExecutionProvider == ExecutionProvider.CUDA)
                 {
-                    var options = CreateSessionOptions();
+                    LoadModelWithCUDA(modelPath, options);
+                }
+                else
+                {
+                    _session = new InferenceSession(modelPath, options);
+                }
 
-                    if (_config.ExecutionProvider == ExecutionProvider.CoreML) 
+                _inputNames = _session.InputMetadata.Keys.ToList();
+                _inputs = new List<NamedOnnxValue>(_inputNames.Count);
+
+                if (_preAllocateOutputs)
+                {
+                    _preallocatedOutputs = new List<NamedOnnxValue>();
+                    foreach (var outputMetadata in _session.OutputMetadata)
                     {
-                        LoadModelWithCoreML(modelPath, options);
-                    }
-                    else if (_config.ExecutionProvider == ExecutionProvider.CUDA)
-                    {
-                        LoadModelWithCUDA(modelPath, options);
-                    }
-                    else
-                    {
-                        _session = new InferenceSession(modelPath, options);
-                    }
-                    
-                    // Initialize input/output metadata
-                    _inputNames = _session.InputMetadata.Keys.ToList();
-                    _inputs = new List<NamedOnnxValue>(_inputNames.Count);
-                    
-                    // Pre-allocate output buffers
-                    if (_preAllocateOutputs)
-                    {
-                        _preallocatedOutputs = new List<NamedOnnxValue>();
-                        foreach (var outputMetadata in _session.OutputMetadata)
+                        var outputName = outputMetadata.Key;
+                        var nodeMetadata = outputMetadata.Value;
+
+                        if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(float))
                         {
-                            var outputName = outputMetadata.Key;
-                            var nodeMetadata = outputMetadata.Value;
-                            
-                            if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(float))
-                            {
-                                CreatePreallocatedTensor<float>(outputName, nodeMetadata.Dimensions);
-                            }
-                            else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
-                            {
-                                CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
-                            }
-                            else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
-                            {
-                                CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
-                            }
+                            CreatePreallocatedTensor<float>(outputName, nodeMetadata.Dimensions);
+                        }
+                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
+                        {
+                            CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
+                        }
+                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
+                        {
+                            CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
                         }
                     }
-                    IsInitialized = true;
-                    Logger.Log($"[{_config.ModelName}] Successfully loaded model: {modelPath}");
-                    return _session;
                 }
-                catch (Exception ex)
-                {
-                    Logger.LogError($"[{_config.ModelName}] Failed to load model: {ex.Message}");
-                    IsInitialized = false;
-                    throw;
-                }
-            });
+                IsInitialized = true;
+                Logger.Log($"[{_config.ModelName}] Successfully loaded model: {modelPath}");
+                return _session;
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"[{_config.ModelName}] Failed to load model: {ex.Message}");
+                IsInitialized = false;
+                throw;
+            }
         }
 
         /// <summary>

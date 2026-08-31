@@ -22,11 +22,17 @@ namespace SparkTTS
         }
 
         /// <summary>
-        /// Gets whether the engine is initialized and ready for use.
+        /// True after embeddings/tokenizers are constructed (ONNX sessions may still be deferred).
+        /// </summary>
+        public static bool HasEngine => Instance._engine != null && !Instance._disposed;
+
+        /// <summary>
+        /// Gets whether the factory is initialized and ready for use.
         /// </summary>
         public static bool IsReady => Instance._initialized && !Instance._disposed;
 
         private QwenTtsEngine _engine;
+        private Task _engineTask;
         private ExecutionProvider _executionProvider = ExecutionProvider.CPU;
         private bool _disposed;
         private bool _initialized;
@@ -66,6 +72,7 @@ namespace SparkTTS
             ORTModel.SetMemoryUsage(memoryUsage);
 
             Instance._executionProvider = executionProvider;
+            Instance._disposed = false;
             bool style = QwenModelPaths.IsCustomVoicePresent();
             bool clone = QwenModelPaths.IsBasePresent();
             Instance._initialized = style || clone;
@@ -94,9 +101,8 @@ namespace SparkTTS
             }
 
             TTSLogger.Log("[CharacterVoiceFactory] Loading Qwen3-TTS...");
-            Instance.EnsureEngine();
+            await Instance.EnsureEngineAsync();
             TTSLogger.Log("[CharacterVoiceFactory] Qwen3-TTS ready");
-            await Task.Yield();
         }
 
         /// <summary>
@@ -126,7 +132,7 @@ namespace SparkTTS
 
             try
             {
-                EnsureEngine();
+                await EnsureEngineAsync();
                 CharacterVoice voice = new(
                     _engine,
                     gender: gender.ToLower(),
@@ -163,7 +169,7 @@ namespace SparkTTS
 
             try
             {
-                EnsureEngine();
+                await EnsureEngineAsync();
                 CharacterVoice voice = new(_engine);
                 await voice.LoadVoiceAsync(voiceFolder);
                 return voice;
@@ -203,7 +209,7 @@ namespace SparkTTS
 
             try
             {
-                EnsureEngine();
+                EnsureEngineAsync().GetAwaiter().GetResult();
                 float[] samples = QwenTtsEngine.ClipToMono24k(referenceClip);
                 float[] embedding = _engine.ExtractSpeakerEmbedding(samples);
                 return new CharacterVoice(_engine, referenceClip, embedding);
@@ -215,15 +221,41 @@ namespace SparkTTS
             }
         }
 
-        private void EnsureEngine()
+        private Task EnsureEngineAsync()
         {
             if (_engine != null)
-                return;
+                return Task.CompletedTask;
+            if (_engineTask != null)
+            {
+                if (!_engineTask.IsFaulted && !_engineTask.IsCanceled)
+                    return _engineTask;
+                _engineTask = null;
+            }
 
-            _engine = new QwenTtsEngine(_executionProvider);
-            TTSLogger.LogVerbose(
-                $"[CharacterVoiceFactory] Qwen engine ready (EP {_executionProvider}, " +
-                $"style={_engine.HasCustomVoice}, clone={_engine.HasClone})");
+            var ep = _executionProvider;
+            _engineTask = BackgroundWork.Run(() =>
+            {
+                if (_engine != null)
+                    return;
+                _engine = new QwenTtsEngine(ep);
+                TTSLogger.LogVerbose(
+                    $"[CharacterVoiceFactory] Qwen engine ready (EP {ep}, " +
+                    $"style={_engine.HasCustomVoice}, clone={_engine.HasClone})");
+            });
+            return _engineTask;
+        }
+
+        /// <summary>
+        /// Drops loaded ONNX sessions and embeddings. Next create/speak reconstructs them.
+        /// Does not mark the factory permanently disposed.
+        /// </summary>
+        public static void UnloadModels()
+        {
+            Instance._engine?.Dispose();
+            Instance._engine = null;
+            Instance._engineTask = null;
+            Instance._disposed = false;
+            TTSLogger.Log("[CharacterVoiceFactory] Unloaded Qwen3-TTS engine");
         }
 
         public void Dispose()
@@ -232,6 +264,7 @@ namespace SparkTTS
             {
                 _engine?.Dispose();
                 _engine = null;
+                _engineTask = null;
                 _initialized = false;
                 _disposed = true;
             }
