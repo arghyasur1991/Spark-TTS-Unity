@@ -133,23 +133,22 @@ namespace SparkTTS
                     return null;
                 }
 
-                if (_speakerEmbedding != null)
-                    await _engine.PreloadCloneAsync();
-                else
-                    await _engine.PreloadStyleAsync();
-
+                // One worker: preload + synth. Do not await those pieces separately —
+                // each await would resume on the Unity sync context and deadlock
+                // EnsureLoaded().GetResult() against session construct.
                 float[] pcm24;
                 if (_speakerEmbedding != null)
                 {
-                    pcm24 = await _engine.SynthesizeCloneAsync(
-                        text, _speakerEmbedding, QwenStyleMap.DefaultLanguage);
+                    var embedding = _speakerEmbedding;
+                    pcm24 = await BackgroundWork.Run(
+                        () => _engine.SynthesizeClone(text, embedding, QwenStyleMap.DefaultLanguage));
                 }
                 else
                 {
                     string speaker = QwenStyleMap.SpeakerForGender(Gender);
                     string instruct = QwenStyleMap.InstructFor(Pitch, Speed);
-                    pcm24 = await _engine.SynthesizeAsync(
-                        text, speaker, QwenStyleMap.DefaultLanguage, instruct);
+                    pcm24 = await BackgroundWork.Run(
+                        () => _engine.Synthesize(text, speaker, QwenStyleMap.DefaultLanguage, instruct));
                 }
 
                 if (pcm24 == null || pcm24.Length == 0)

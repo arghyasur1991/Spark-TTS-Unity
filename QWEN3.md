@@ -81,7 +81,7 @@ This package does not download Hub files. A host app copies the layouts above in
 
 `Initialize` passes `ExecutionProvider` into Spark `ORTModel` (same CPU / CUDA / CoreML path as the original Spark graphs). Default is **CPU**. CoreML still has a known load NRE on some machines — prefer CPU until that is fixed in `ORTModel`.
 
-Every Qwen ONNX file is an `ORTModel` (`QwenOnnxModel` or a named subclass). Sessions defer-load (the 5–14 GB talkers must not all open at factory init). The decode loop is synchronous `Session.Run` after `EnsureLoaded` — do not wrap each token in `Task.Run` / `RunDisposable`. Sampling matches Spark `LLMModel`: reused buffers, min-heap top-K, `ThreadLocal<Random>`, `DenseTensor.Buffer.ToArray()`.
+Every Qwen ONNX file is an `ORTModel` (`QwenOnnxModel` or a named subclass). Sessions defer-load (the 5–14 GB talkers must not all open at factory init). The decode loop is synchronous `Session.Run` after `EnsureLoaded` — do not wrap each token in `Task.Run` / `RunDisposable`. Sampling matches Spark `LLMModel`: reused buffers, min-heap top-K, `ThreadLocal<Random>`, `DenseTensor.Buffer.ToArray()`. `BackgroundWork` suppresses ExecutionContext flow so session construct stays off the Unity main thread. CustomVoice vocoder output layout is `[batch, 1, samples]` — never treat dim 1 as the waveform length.
 
 CustomVoice (npy embeddings + `position_ids`) and Base (ONNX embeddings, no `position_ids`) keep **two generate loops** — the graphs are not drop-in. One engine (`QwenTtsEngine`), one vocoder class, one sampler, one path class.
 

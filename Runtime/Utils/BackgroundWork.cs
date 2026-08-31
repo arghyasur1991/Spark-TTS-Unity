@@ -6,28 +6,49 @@ namespace SparkTTS.Utils
 {
     /// <summary>
     /// Thread-pool work that does not use Unity's synchronization context.
-    /// <c>new Task().Start()</c> and <c>Task.Run</c> can still marshal onto the
-    /// editor main thread via ExecutionContext; that is what made 5 GB ONNX
-    /// session construct look like a main-thread hang.
+    /// <c>Task.Run</c> / <c>new Task().Start()</c> flow ExecutionContext, so
+    /// <c>new InferenceSession</c> can marshal onto the editor thread and
+    /// deadlock with <c>GetResult</c> / coroutine pumps.
     /// </summary>
     internal static class BackgroundWork
     {
         public static Task Run(Action action)
         {
-            return Task.Factory.StartNew(
-                action,
-                CancellationToken.None,
-                TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
-                TaskScheduler.Default);
+            return Start(() =>
+            {
+                action();
+                return true;
+            });
         }
 
         public static Task<T> Run<T>(Func<T> func)
         {
-            return Task.Factory.StartNew(
-                func,
-                CancellationToken.None,
-                TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
-                TaskScheduler.Default);
+            return Start(func);
+        }
+
+        static Task<T> Start<T>(Func<T> func)
+        {
+            AsyncFlowControl flow = default;
+            bool suppressed = false;
+            if (!ExecutionContext.IsFlowSuppressed())
+            {
+                flow = ExecutionContext.SuppressFlow();
+                suppressed = true;
+            }
+
+            try
+            {
+                return Task.Factory.StartNew(
+                    func,
+                    CancellationToken.None,
+                    TaskCreationOptions.LongRunning | TaskCreationOptions.DenyChildAttach,
+                    TaskScheduler.Default);
+            }
+            finally
+            {
+                if (suppressed)
+                    flow.Undo();
+            }
         }
     }
 }

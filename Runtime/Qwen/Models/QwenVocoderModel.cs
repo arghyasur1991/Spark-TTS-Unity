@@ -88,10 +88,9 @@ namespace SparkTTS.Qwen.Models
 
             using var results = Run(feeds);
             var wav = CopyFloat(results[0]);
+            // Flat buffer is the waveform. Do not use Dimensions[1] — CustomVoice
+            // vocoder is [batch, 1, samples]; that dim is channels, not time.
             int wavLen = wav.Length;
-            var tensor = results[0].AsTensor<float>();
-            if (tensor.Dimensions.Length >= 2)
-                wavLen = tensor.Dimensions[1] > 0 ? tensor.Dimensions[1] : wavLen;
 
             int target = timesteps * SamplesPerFrame;
             if (target > wavLen)
@@ -99,8 +98,10 @@ namespace SparkTTS.Qwen.Models
             if (results.Count > 1)
             {
                 var lengths = CopyLong(results[1]);
-                if (lengths.Length > 0 && lengths[0] > 0 && lengths[0] < target)
-                    target = (int)lengths[0];
+                // lengths[0] is sample count when it is in a plausible range.
+                // Frame counts (T, or 1) must not trim a 24 kHz buffer to silence.
+                if (lengths.Length > 0 && lengths[0] >= SamplesPerFrame / 2 && lengths[0] < wavLen)
+                    target = Math.Min(target, (int)lengths[0]);
             }
 
             if (!_timeMajor && wav.Length != timesteps * SamplesPerFrame && wav.Length < target)

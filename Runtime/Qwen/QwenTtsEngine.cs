@@ -82,7 +82,10 @@ namespace SparkTTS.Qwen
                 var tokenIds = _styleTokenizer.BuildCustomVoicePrompt(text, speaker, language, instruct);
                 TTSLogger.LogVerbose($"[QwenTtsEngine] Tokenized {tokenIds.Length} ids, speaker={speaker}");
                 var codes = _languageModel.Generate(tokenIds, speaker, language, cancellationToken: cancellationToken);
-                return _styleVocoder.Decode(codes, cancellationToken);
+                var pcm = _styleVocoder.Decode(codes, cancellationToken);
+                TTSLogger.Log(
+                    $"[QwenTtsEngine] style codes T={codes.GetLength(2)} wav={pcm.Length} @24k speaker={speaker}");
+                return pcm;
             }
         }
 
