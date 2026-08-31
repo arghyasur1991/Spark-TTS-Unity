@@ -127,6 +127,12 @@ namespace SparkTTS.Models
             Int8
         }
 
+        /// <summary>
+        /// Serializes <c>new InferenceSession</c> with steal/adopt so a domain
+        /// reload cannot tear the AppDomain down mid-construct.
+        /// </summary>
+        internal static readonly object NativeLifetimeGate = new object();
+
         #endregion
 
         #region Constructor
@@ -578,15 +584,18 @@ namespace SparkTTS.Models
         {
             key = SessionKeepAliveKey;
             handle = IntPtr.Zero;
-            if (_session == null)
-                return false;
+            lock (NativeLifetimeGate)
+            {
+                if (_session == null)
+                    return false;
 #if UNITY_EDITOR
-            handle = NativeSessionKeepAlive.DetachSessionHandle(_session);
+                handle = NativeSessionKeepAlive.DetachSessionHandle(_session);
 #endif
-            _session = null;
-            _loadTask = null;
-            IsInitialized = false;
-            return handle != IntPtr.Zero;
+                _session = null;
+                _loadTask = null;
+                IsInitialized = false;
+                return handle != IntPtr.Zero;
+            }
         }
 
         internal void AdoptSession(InferenceSession session)
@@ -594,13 +603,16 @@ namespace SparkTTS.Models
             if (session == null)
                 throw new ArgumentNullException(nameof(session));
             var sw = Stopwatch.StartNew();
-            _session?.Dispose();
-            _session = session;
-            _inputNames = session.InputMetadata.Keys.ToList();
-            _inputs = new List<NamedOnnxValue>(_inputNames.Count);
-            _loadTask = Task.FromResult(session);
-            _disposed = false;
-            IsInitialized = true;
+            lock (NativeLifetimeGate)
+            {
+                _session?.Dispose();
+                _session = session;
+                _inputNames = session.InputMetadata.Keys.ToList();
+                _inputs = new List<NamedOnnxValue>(_inputNames.Count);
+                _loadTask = Task.FromResult(session);
+                _disposed = false;
+                IsInitialized = true;
+            }
             Logger.Log($"[{_config.ModelName}] Adopted session in {sw.ElapsedMilliseconds}ms");
         }
 
@@ -637,62 +649,69 @@ namespace SparkTTS.Models
                 Logger.LogError($"[{_config.ModelName}] Model file not found: {modelPath}");
                 throw new FileNotFoundException($"Model file not found: {modelPath}");
             }
-            var sw = Stopwatch.StartNew();
-            long bytes = new FileInfo(modelPath).Length;
-            Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName} ({bytes / 1e6:F1} MB)");
 
-            try
+            lock (NativeLifetimeGate)
             {
-                var options = CreateSessionOptions();
+                if (_session != null)
+                    return _session;
 
-                if (_config.ExecutionProvider == ExecutionProvider.CoreML)
-                {
-                    LoadModelWithCoreML(modelPath, options);
-                }
-                else if (_config.ExecutionProvider == ExecutionProvider.CUDA)
-                {
-                    LoadModelWithCUDA(modelPath, options);
-                }
-                else
-                {
-                    _session = new InferenceSession(modelPath, options);
-                }
+                var sw = Stopwatch.StartNew();
+                long bytes = new FileInfo(modelPath).Length;
+                Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName} ({bytes / 1e6:F1} MB)");
 
-                _inputNames = _session.InputMetadata.Keys.ToList();
-                _inputs = new List<NamedOnnxValue>(_inputNames.Count);
-
-                if (_preAllocateOutputs)
+                try
                 {
-                    _preallocatedOutputs = new List<NamedOnnxValue>();
-                    foreach (var outputMetadata in _session.OutputMetadata)
+                    var options = CreateSessionOptions();
+
+                    if (_config.ExecutionProvider == ExecutionProvider.CoreML)
                     {
-                        var outputName = outputMetadata.Key;
-                        var nodeMetadata = outputMetadata.Value;
+                        LoadModelWithCoreML(modelPath, options);
+                    }
+                    else if (_config.ExecutionProvider == ExecutionProvider.CUDA)
+                    {
+                        LoadModelWithCUDA(modelPath, options);
+                    }
+                    else
+                    {
+                        _session = new InferenceSession(modelPath, options);
+                    }
 
-                        if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(float))
+                    _inputNames = _session.InputMetadata.Keys.ToList();
+                    _inputs = new List<NamedOnnxValue>(_inputNames.Count);
+
+                    if (_preAllocateOutputs)
+                    {
+                        _preallocatedOutputs = new List<NamedOnnxValue>();
+                        foreach (var outputMetadata in _session.OutputMetadata)
                         {
-                            CreatePreallocatedTensor<float>(outputName, nodeMetadata.Dimensions);
-                        }
-                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
-                        {
-                            CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
-                        }
-                        else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
-                        {
-                            CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
+                            var outputName = outputMetadata.Key;
+                            var nodeMetadata = outputMetadata.Value;
+
+                            if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(float))
+                            {
+                                CreatePreallocatedTensor<float>(outputName, nodeMetadata.Dimensions);
+                            }
+                            else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(long))
+                            {
+                                CreatePreallocatedTensor<long>(outputName, nodeMetadata.Dimensions);
+                            }
+                            else if (nodeMetadata.IsTensor && nodeMetadata.ElementType == typeof(int))
+                            {
+                                CreatePreallocatedTensor<int>(outputName, nodeMetadata.Dimensions);
+                            }
                         }
                     }
+                    IsInitialized = true;
+                    Logger.Log(
+                        $"[{_config.ModelName}] Loaded in {sw.ElapsedMilliseconds}ms ({bytes / 1e6:F1} MB)");
+                    return _session;
                 }
-                IsInitialized = true;
-                Logger.Log(
-                    $"[{_config.ModelName}] Loaded in {sw.ElapsedMilliseconds}ms ({bytes / 1e6:F1} MB)");
-                return _session;
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"[{_config.ModelName}] Failed to load model: {ex.Message}");
-                IsInitialized = false;
-                throw;
+                catch (Exception ex)
+                {
+                    Logger.LogError($"[{_config.ModelName}] Failed to load model: {ex.Message}");
+                    IsInitialized = false;
+                    throw;
+                }
             }
         }
 
@@ -1082,14 +1101,17 @@ namespace SparkTTS.Models
             {
                 if (disposing)
                 {
-                    _session?.Dispose();
-                    _inputs?.Clear();
-                    _preallocatedOutputs?.Clear();
-                    IsInitialized = false;
-                    _loadTask?.Dispose();
-                    _loadTask = null;
-                    _session = null;
-                    
+                    lock (NativeLifetimeGate)
+                    {
+                        _session?.Dispose();
+                        _inputs?.Clear();
+                        _preallocatedOutputs?.Clear();
+                        IsInitialized = false;
+                        _loadTask?.Dispose();
+                        _loadTask = null;
+                        _session = null;
+                    }
+
                     Logger.Log($"[{_config?.ModelName ?? "ORTModel"}] Disposed successfully");
                 }
                 

@@ -25,8 +25,9 @@ namespace SparkTTS
         }
 
         /// <summary>
-        /// True after embeddings/tokenizers are constructed (ONNX sessions may still be deferred),
-        /// or editor keep-alive has wrapped native sessions / embedding buffers waiting to be adopted.
+        /// True after the engine exists (or native sessions / embeddings are waiting to wrap).
+        /// CustomVoice graphs open from <see cref="WaitForModelsLoadedAsync"/> once the
+        /// editor is idle — not from afterAssemblyReload.
         /// </summary>
         public static bool HasEngine
         {
@@ -133,8 +134,9 @@ namespace SparkTTS
         }
 
         /// <summary>
-        /// Waits for models to be ready. Constructs the engine (tokenizer / embeddings).
-        /// Large ONNX sessions stay deferred until the first generate or clone extract.
+        /// Waits for models to be ready: tokenizer, embeddings, and CustomVoice
+        /// ONNX sessions (prefill / decode / code_predictor / vocoder). Base clone
+        /// graphs stay deferred until a reference extract.
         /// </summary>
         public static async Task WaitForModelsLoadedAsync()
         {
@@ -146,6 +148,8 @@ namespace SparkTTS
             TTSLogger.Log("[CharacterVoiceFactory] Loading Qwen3-TTS...");
             var sw = Stopwatch.StartNew();
             await Instance.EnsureEngineAsync();
+            if (Instance._engine != null && Instance._engine.HasCustomVoice)
+                await Instance._engine.PreloadStyleAsync();
             TTSLogger.Log($"[CharacterVoiceFactory] Qwen3-TTS ready in {sw.ElapsedMilliseconds}ms");
         }
 
@@ -269,14 +273,14 @@ namespace SparkTTS
 
         private Task EnsureEngineAsync()
         {
-            if (_engine != null)
-                return Task.CompletedTask;
             if (_engineTask != null)
             {
                 if (!_engineTask.IsFaulted && !_engineTask.IsCanceled)
                     return _engineTask;
                 _engineTask = null;
             }
+            if (_engine != null)
+                return Task.CompletedTask;
 
             var ep = _executionProvider;
             _engineTask = BackgroundWork.Run(() =>
@@ -296,38 +300,43 @@ namespace SparkTTS
         }
 
 #if UNITY_EDITOR
+        static readonly object KeepAliveGate = new object();
+
         static bool TryApplyPendingSessions(ExecutionProvider ep)
         {
-            if (Instance._engine != null)
-                return true;
-            bool hasSessions = NativeSessionKeepAlive.HasPending;
-            bool hasEmb = NativeSessionKeepAlive.HasPendingEmbeddings;
-            if (!hasSessions && !hasEmb)
-                return false;
-
-            var pending = hasSessions ? NativeSessionKeepAlive.TakePending() : null;
-            Instance._disposed = false;
-            Instance._engine = new QwenTtsEngine(ep);
-
-            int offered = pending?.Count ?? 0;
-            int leftover = 0;
-            if (pending != null && pending.Count > 0)
+            lock (KeepAliveGate)
             {
-                Instance._engine.AdoptNativeSessions(pending);
-                leftover = pending.Count;
-                foreach (var leftoverSession in pending.Values)
+                if (Instance._engine != null)
+                    return true;
+                bool hasSessions = NativeSessionKeepAlive.HasPending;
+                bool hasEmb = NativeSessionKeepAlive.HasPendingEmbeddings;
+                if (!hasSessions && !hasEmb)
+                    return false;
+
+                var pending = hasSessions ? NativeSessionKeepAlive.TakePending() : null;
+                Instance._disposed = false;
+                Instance._engine = new QwenTtsEngine(ep);
+
+                int offered = pending?.Count ?? 0;
+                int leftover = 0;
+                if (pending != null && pending.Count > 0)
                 {
-                    try { leftoverSession.Dispose(); }
-                    catch (Exception ex) { TTSLogger.LogWarning("[CharacterVoiceFactory] leftover session: " + ex.Message); }
+                    Instance._engine.AdoptNativeSessions(pending);
+                    leftover = pending.Count;
+                    foreach (var leftoverSession in pending.Values)
+                    {
+                        try { leftoverSession.Dispose(); }
+                        catch (Exception ex) { TTSLogger.LogWarning("[CharacterVoiceFactory] leftover session: " + ex.Message); }
+                    }
                 }
-            }
 
-            if (offered > 0)
-            {
-                TTSLogger.Log(
-                    $"[CharacterVoiceFactory] Adopted {offered - leftover}/{offered} ONNX sessions after domain reload");
+                if (offered > 0)
+                {
+                    TTSLogger.Log(
+                        $"[CharacterVoiceFactory] Adopted {offered - leftover}/{offered} ONNX sessions after domain reload");
+                }
+                return true;
             }
-            return true;
         }
 #endif
 
@@ -357,6 +366,8 @@ namespace SparkTTS
             if (!KeepNativeSessionsAcrossReload)
                 return;
 
+            lock (KeepAliveGate)
+            {
             NativeEmbSlot[] embeddings = null;
             var sessions = new List<(string key, IntPtr handle)>();
             if (Instance._engine != null)
@@ -393,6 +404,7 @@ namespace SparkTTS
 
             if (embeddings != null)
                 NativeSessionKeepAlive.StashEmbeddings(embeddings);
+            }
         }
 
         /// <summary>

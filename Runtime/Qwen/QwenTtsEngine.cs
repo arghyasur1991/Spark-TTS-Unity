@@ -169,22 +169,31 @@ namespace SparkTTS.Qwen
         }
 
         /// <summary>
+        /// Opens CustomVoice ONNX sessions. Call from a worker thread
+        /// (already inside <c>EnsureEngineAsync</c> or <see cref="PreloadStyleAsync"/>).
+        /// Adopted sessions are a GetSession no-op.
+        /// </summary>
+        public void PreloadStyle()
+        {
+            if (_languageModel == null)
+                return;
+            var sw = Stopwatch.StartNew();
+            lock (_gate)
+            {
+                _languageModel.PreloadSessions();
+                _styleVocoder.GetSession();
+            }
+            TTSLogger.Log($"[QwenTtsEngine] PreloadStyle {sw.ElapsedMilliseconds}ms");
+        }
+
+        /// <summary>
         /// Opens CustomVoice ONNX sessions on a worker thread. Safe to call from the main thread.
         /// </summary>
         public Task PreloadStyleAsync()
         {
             if (_languageModel == null)
                 return Task.CompletedTask;
-            return BackgroundWork.Run(() =>
-            {
-                var sw = Stopwatch.StartNew();
-                lock (_gate)
-                {
-                    _languageModel.PreloadSessions();
-                    _styleVocoder.GetSession();
-                }
-                TTSLogger.Log($"[QwenTtsEngine] PreloadStyle {sw.ElapsedMilliseconds}ms");
-            });
+            return BackgroundWork.Run(PreloadStyle);
         }
 
         /// <summary>
