@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using UnityEngine;
 using SparkTTS.Qwen.Models;
@@ -143,8 +144,9 @@ namespace SparkTTS
             }
 
             TTSLogger.Log("[CharacterVoiceFactory] Loading Qwen3-TTS...");
+            var sw = Stopwatch.StartNew();
             await Instance.EnsureEngineAsync();
-            TTSLogger.Log("[CharacterVoiceFactory] Qwen3-TTS ready");
+            TTSLogger.Log($"[CharacterVoiceFactory] Qwen3-TTS ready in {sw.ElapsedMilliseconds}ms");
         }
 
         /// <summary>
@@ -175,6 +177,7 @@ namespace SparkTTS
             try
             {
                 await EnsureEngineAsync();
+                var sw = Stopwatch.StartNew();
                 CharacterVoice voice = new(
                     _engine,
                     gender: gender.ToLower(),
@@ -184,6 +187,7 @@ namespace SparkTTS
                 );
 
                 await voice.GenerateVoiceAsync(referenceText);
+                TTSLogger.Log($"[CharacterVoiceFactory] CreateFromStyle {gender}/{pitch}/{speed} {sw.ElapsedMilliseconds}ms");
                 return voice;
             }
             catch (Exception e)

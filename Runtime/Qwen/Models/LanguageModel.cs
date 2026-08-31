@@ -13,6 +13,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using SparkTTS.Core;
 using SparkTTS.Models;
 using SparkTTS.Qwen;
+using TTSLogger = SparkTTS.Utils.Logger;
 
 namespace SparkTTS.Qwen.Models
 {
@@ -730,9 +731,15 @@ internal sealed class LanguageModel : IDisposable
 
     internal void PreloadSessions()
     {
+        var sw = Stopwatch.StartNew();
         GetPrefillSession();
+        TTSLogger.Log($"[LanguageModel] prefill ready {sw.ElapsedMilliseconds}ms");
+        sw.Restart();
         GetDecodeSession();
+        TTSLogger.Log($"[LanguageModel] decode ready {sw.ElapsedMilliseconds}ms");
+        sw.Restart();
         GetCpSession();
+        TTSLogger.Log($"[LanguageModel] code_predictor ready {sw.ElapsedMilliseconds}ms");
     }
 
     public void Dispose()

@@ -3,10 +3,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
+using TTSLogger = SparkTTS.Utils.Logger;
 
 namespace SparkTTS.Qwen.Models
 {
@@ -60,6 +62,7 @@ namespace SparkTTS.Qwen.Models
 
         public TextTokenizer(string modelDir)
         {
+            var sw = Stopwatch.StartNew();
             var vocabPath = Path.Combine(modelDir, "vocab.json");
             var mergesPath = Path.Combine(modelDir, "merges.txt");
 
@@ -72,6 +75,7 @@ namespace SparkTTS.Qwen.Models
                      ?? throw new InvalidDataException("Failed to parse vocab.json");
             _ranks = LoadMerges(mergesPath);
             _byteToUnicode = BuildBytesToUnicode();
+            TTSLogger.Log($"[TextTokenizer] Loaded {modelDir} in {sw.ElapsedMilliseconds}ms");
         }
 
         public int[] Encode(string text)

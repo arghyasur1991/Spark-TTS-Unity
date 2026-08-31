@@ -52,6 +52,8 @@ namespace SparkTTS.Qwen
                 var embeddingsDir = System.IO.Path.Combine(QwenModelPaths.Root, "embeddings");
                 var configPath = System.IO.Path.Combine(embeddingsDir, "config.json");
                 _styleTokenizer = new TextTokenizer(System.IO.Path.Combine(QwenModelPaths.Root, "tokenizer"));
+                TTSLogger.Log($"[QwenTtsEngine] style tokenizer {sw.ElapsedMilliseconds}ms");
+                sw.Restart();
 #if UNITY_EDITOR
                 var pendingEmb = NativeSessionKeepAlive.TakePendingEmbeddings();
                 if (pendingEmb != null)
@@ -67,17 +69,21 @@ namespace SparkTTS.Qwen
                     TTSLogger.Log(
                         $"[QwenTtsEngine] CustomVoice embeddings from {QwenModelPaths.Root} in {sw.ElapsedMilliseconds}ms");
                 }
+                sw.Restart();
                 _languageModel = new LanguageModel(_embeddings, executionProvider);
                 _styleVocoder = QwenVocoderModel.CustomVoice(executionProvider);
+                TTSLogger.Log($"[QwenTtsEngine] style ORT wrappers {sw.ElapsedMilliseconds}ms");
             }
 
             if (clone)
             {
+                var sw = Stopwatch.StartNew();
                 _baseConfig = QwenBaseConfig.Load(QwenModelPaths.BaseConfigPath);
                 _cloneTokenizer = new TextTokenizer(QwenModelPaths.BaseTokenizerDir);
                 _talker = new QwenBaseTalker(_baseConfig, executionProvider);
                 _speakerEncoder = new QwenSpeakerEncoderModel(executionProvider);
-                TTSLogger.Log($"[QwenTtsEngine] Base clone config from {QwenModelPaths.BaseRoot} (hidden={_baseConfig.HiddenSize})");
+                TTSLogger.Log(
+                    $"[QwenTtsEngine] Base clone wrappers from {QwenModelPaths.BaseRoot} in {sw.ElapsedMilliseconds}ms (hidden={_baseConfig.HiddenSize})");
             }
         }
 
@@ -95,13 +101,14 @@ namespace SparkTTS.Qwen
 
             lock (_gate)
             {
+                var sw = Stopwatch.StartNew();
                 cancellationToken.ThrowIfCancellationRequested();
                 var tokenIds = _styleTokenizer.BuildCustomVoicePrompt(text, speaker, language, instruct);
                 TTSLogger.LogVerbose($"[QwenTtsEngine] Tokenized {tokenIds.Length} ids, speaker={speaker}");
                 var codes = _languageModel.Generate(tokenIds, speaker, language, cancellationToken: cancellationToken);
                 var pcm = _styleVocoder.Decode(codes, cancellationToken);
                 TTSLogger.Log(
-                    $"[QwenTtsEngine] style codes T={codes.GetLength(2)} wav={pcm.Length} @24k speaker={speaker}");
+                    $"[QwenTtsEngine] style synth {sw.ElapsedMilliseconds}ms codes T={codes.GetLength(2)} wav={pcm.Length} @24k speaker={speaker}");
                 return pcm;
             }
         }
@@ -170,11 +177,13 @@ namespace SparkTTS.Qwen
                 return Task.CompletedTask;
             return BackgroundWork.Run(() =>
             {
+                var sw = Stopwatch.StartNew();
                 lock (_gate)
                 {
                     _languageModel.PreloadSessions();
                     _styleVocoder.GetSession();
                 }
+                TTSLogger.Log($"[QwenTtsEngine] PreloadStyle {sw.ElapsedMilliseconds}ms");
             });
         }
 
@@ -187,11 +196,13 @@ namespace SparkTTS.Qwen
                 return Task.CompletedTask;
             return BackgroundWork.Run(() =>
             {
+                var sw = Stopwatch.StartNew();
                 lock (_gate)
                 {
                     _talker.PreloadSessions();
                     _speakerEncoder.GetSession();
                 }
+                TTSLogger.Log($"[QwenTtsEngine] PreloadClone {sw.ElapsedMilliseconds}ms");
             });
         }
 

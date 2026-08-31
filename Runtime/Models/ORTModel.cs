@@ -2,6 +2,7 @@ using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -592,6 +593,7 @@ namespace SparkTTS.Models
         {
             if (session == null)
                 throw new ArgumentNullException(nameof(session));
+            var sw = Stopwatch.StartNew();
             _session?.Dispose();
             _session = session;
             _inputNames = session.InputMetadata.Keys.ToList();
@@ -599,6 +601,7 @@ namespace SparkTTS.Models
             _loadTask = Task.FromResult(session);
             _disposed = false;
             IsInitialized = true;
+            Logger.Log($"[{_config.ModelName}] Adopted session in {sw.ElapsedMilliseconds}ms");
         }
 
         /// <summary>
@@ -634,7 +637,9 @@ namespace SparkTTS.Models
                 Logger.LogError($"[{_config.ModelName}] Model file not found: {modelPath}");
                 throw new FileNotFoundException($"Model file not found: {modelPath}");
             }
-            Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName}");
+            var sw = Stopwatch.StartNew();
+            long bytes = new FileInfo(modelPath).Length;
+            Logger.Log($"[{_config.ModelName}] Loading model: {_config.ModelName} ({bytes / 1e6:F1} MB)");
 
             try
             {
@@ -679,7 +684,8 @@ namespace SparkTTS.Models
                     }
                 }
                 IsInitialized = true;
-                Logger.Log($"[{_config.ModelName}] Successfully loaded model: {modelPath}");
+                Logger.Log(
+                    $"[{_config.ModelName}] Loaded in {sw.ElapsedMilliseconds}ms ({bytes / 1e6:F1} MB)");
                 return _session;
             }
             catch (Exception ex)
