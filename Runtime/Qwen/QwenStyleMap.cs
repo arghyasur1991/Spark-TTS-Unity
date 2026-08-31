@@ -4,12 +4,12 @@ using System.Text;
 namespace SparkTTS.Qwen
 {
     /// <summary>
-    /// Maps Spark CharacterVoice style knobs onto Qwen3-TTS CustomVoice (preset speaker + instruct).
-    /// 1.7B supports instruct; pitch/speed become instruction text rather than Spark global tokens.
+    /// Maps Spark CharacterVoice style knobs onto Qwen3-TTS VoiceDesign.
+    /// The voice is a natural-language instruct string, not a preset speaker id.
     /// </summary>
     public static class QwenStyleMap
     {
-        public const string DefaultLanguage = "auto";
+        public const string DefaultLanguage = "english";
 
         public static string SpeakerForGender(string gender)
         {
@@ -27,21 +27,47 @@ namespace SparkTTS.Qwen
         }
 
         /// <summary>
+        /// VoiceDesign instruct. An explicit description wins; otherwise gender/pitch/speed
+        /// are folded into one sentence so Call Studio knobs still do something.
+        /// </summary>
+        public static string VoiceDesignInstruct(string gender, string pitch, string speed, string instruct = null)
+        {
+            if (!string.IsNullOrWhiteSpace(instruct))
+                return instruct.Trim();
+
+            var parts = new List<string>();
+            if (!string.IsNullOrEmpty(gender))
+            {
+                switch (gender.Trim().ToLowerInvariant())
+                {
+                    case "female":
+                    case "woman":
+                    case "f":
+                        parts.Add("a female speaker");
+                        break;
+                    default:
+                        parts.Add("a male speaker");
+                        break;
+                }
+            }
+            AppendPitch(parts, pitch);
+            AppendSpeed(parts, speed);
+            if (parts.Count == 0)
+                return "A natural conversational speaking voice.";
+            var sb = new StringBuilder();
+            sb.Append("Speak as ");
+            sb.Append(string.Join(", ", parts));
+            sb.Append('.');
+            return sb.ToString();
+        }
+
+        /// <summary>
         /// Builds an instruct string for 1.7B. Returns null when pitch and speed are moderate/default
         /// so the prompt stays a single assistant turn.
         /// </summary>
         public static string InstructFor(string pitch, string speed)
         {
-            var parts = new List<string>();
-            AppendPitch(parts, pitch);
-            AppendSpeed(parts, speed);
-            if (parts.Count == 0)
-                return null;
-            var sb = new StringBuilder();
-            sb.Append("Speak ");
-            sb.Append(string.Join(", ", parts));
-            sb.Append('.');
-            return sb.ToString();
+            return VoiceDesignInstruct(null, pitch, speed, null);
         }
 
         private static void AppendPitch(List<string> parts, string pitch)

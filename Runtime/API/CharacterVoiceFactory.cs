@@ -93,8 +93,8 @@ namespace SparkTTS
             else if (!style)
             {
                 TTSLogger.LogWarning(
-                    "[CharacterVoiceFactory] CustomVoice 1.7B missing — CreateFromStyleAsync unavailable. " +
-                    "Clone is available from Base at " + QwenModelPaths.BaseRoot);
+                    "[CharacterVoiceFactory] VoiceDesign 1.7B missing — CreateFromStyleAsync unavailable. " +
+                    "Place exported ONNX at " + QwenModelPaths.Root);
             }
             else if (!clone)
             {
@@ -150,7 +150,9 @@ namespace SparkTTS
         /// <summary>
         /// Creates a character voice using style-based generation with specified voice parameters.
         /// </summary>
-        public async Task<CharacterVoice> CreateFromStyleAsync(string gender, string pitch, string speed, string referenceText = "I am a character voice")
+        public async Task<CharacterVoice> CreateFromStyleAsync(
+            string gender, string pitch, string speed, string referenceText = "I am a character voice",
+            string instruct = null)
         {
             if (!_initialized || _disposed)
             {
@@ -161,7 +163,7 @@ namespace SparkTTS
             if (!QwenModelPaths.IsCustomVoicePresent())
             {
                 TTSLogger.LogError(
-                    "[CharacterVoiceFactory] CreateFromStyleAsync needs CustomVoice at " +
+                    "[CharacterVoiceFactory] CreateFromStyleAsync needs VoiceDesign ONNX at " +
                     QwenModelPaths.Root);
                 return null;
             }
@@ -180,7 +182,8 @@ namespace SparkTTS
                     gender: gender.ToLower(),
                     pitch: pitch?.ToLower() ?? "moderate",
                     speed: speed?.ToLower() ?? "moderate",
-                    referenceText: referenceText
+                    referenceText: referenceText,
+                    instruct: instruct
                 );
 
                 await voice.GenerateVoiceAsync(referenceText);

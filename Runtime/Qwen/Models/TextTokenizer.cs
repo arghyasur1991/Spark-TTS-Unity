@@ -100,17 +100,25 @@ namespace SparkTTS.Qwen.Models
             return ids.ToArray();
         }
 
+        public int[] BuildAssistantPrompt(string text)
+        {
+            var assistantWrapped = $"<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n";
+            return Encode(assistantWrapped);
+        }
+
+        public int[] BuildInstructTokens(string instruct)
+        {
+            if (string.IsNullOrEmpty(instruct))
+                return Array.Empty<int>();
+            var instructWrapped = $"<|im_start|>user\n{instruct}<|im_end|>\n";
+            return Encode(instructWrapped);
+        }
+
         public int[] BuildCustomVoicePrompt(string text, string speaker, string language, string instruct = null)
         {
             var tokens = new List<int>();
-            if (!string.IsNullOrEmpty(instruct))
-            {
-                var instructWrapped = $"<|im_start|>user\n{instruct}<|im_end|>\n";
-                tokens.AddRange(Encode(instructWrapped));
-            }
-
-            var assistantWrapped = $"<|im_start|>assistant\n{text}<|im_end|>\n<|im_start|>assistant\n";
-            tokens.AddRange(Encode(assistantWrapped));
+            tokens.AddRange(BuildInstructTokens(instruct));
+            tokens.AddRange(BuildAssistantPrompt(text));
             return tokens.ToArray();
         }
 

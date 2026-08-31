@@ -87,7 +87,7 @@ namespace SparkTTS.Qwen
             if (_disposed)
                 throw new ObjectDisposedException(nameof(QwenTtsEngine));
             if (_languageModel == null)
-                throw new InvalidOperationException("CustomVoice weights are not installed.");
+                throw new InvalidOperationException("VoiceDesign weights are not installed.");
             if (string.IsNullOrEmpty(text))
                 throw new ArgumentException("Text cannot be empty.", nameof(text));
             if (text.Length > 10000)
@@ -96,12 +96,16 @@ namespace SparkTTS.Qwen
             lock (_gate)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var tokenIds = _styleTokenizer.BuildCustomVoicePrompt(text, speaker, language, instruct);
-                TTSLogger.LogVerbose($"[QwenTtsEngine] Tokenized {tokenIds.Length} ids, speaker={speaker}");
-                var codes = _languageModel.Generate(tokenIds, speaker, language, cancellationToken: cancellationToken);
+                _ = speaker;
+                var assistantIds = _styleTokenizer.BuildAssistantPrompt(text);
+                var instructIds = _styleTokenizer.BuildInstructTokens(instruct);
+                TTSLogger.LogVerbose(
+                    $"[QwenTtsEngine] VoiceDesign tokens assistant={assistantIds.Length} instruct={instructIds.Length}");
+                var codes = _languageModel.GenerateVoiceDesign(
+                    assistantIds, instructIds, language, cancellationToken: cancellationToken);
                 var pcm = _styleVocoder.Decode(codes, cancellationToken);
                 TTSLogger.Log(
-                    $"[QwenTtsEngine] style codes T={codes.GetLength(2)} wav={pcm.Length} @24k speaker={speaker}");
+                    $"[QwenTtsEngine] VoiceDesign codes T={codes.GetLength(2)} wav={pcm.Length} @24k");
                 return pcm;
             }
         }

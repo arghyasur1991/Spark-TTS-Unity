@@ -18,7 +18,7 @@ namespace SparkTTS.Qwen.Models
 {
 
 /// <summary>
-/// ONNX language model for Qwen3-TTS CustomVoice.
+/// ONNX language model for Qwen3-TTS VoiceDesign (same graph split as CustomVoice).
 /// Sessions are Spark ORTModel instances (QwenOnnxModel).
 /// </summary>
 internal sealed class LanguageModel : IDisposable
@@ -140,6 +140,21 @@ internal sealed class LanguageModel : IDisposable
             refTokenIds, refAudioCodes, cancellationToken);
     }
 
+    /// <summary>
+    /// VoiceDesign: no speaker token, instruct embeddings prepended, all text in prefill.
+    /// </summary>
+    public long[,,] GenerateVoiceDesign(int[] assistantTokenIds, int[] instructTokenIds, string language,
+                             int maxNewTokens = 2048, float temperature = 0.9f,
+                             int topK = 50, float topP = 1.0f,
+                             float repetitionPenalty = 1.05f,
+                             CancellationToken cancellationToken = default)
+    {
+        return GenerateInternal(assistantTokenIds, speakerId: -1, language, speakerEmbedding: null,
+            maxNewTokens, temperature, topK, topP, repetitionPenalty,
+            cancellationToken: cancellationToken,
+            instructTokenIds: instructTokenIds, voiceDesign: true);
+    }
+
     private long[,,] GenerateInternal(int[] tokenIds, int speakerId, string language,
                              float[] speakerEmbedding,
                              int maxNewTokens, float temperature,
@@ -147,15 +162,18 @@ internal sealed class LanguageModel : IDisposable
                              float repetitionPenalty,
                              int[] refTokenIds = null,
                              long[,,] refAudioCodes = null,
-                             CancellationToken cancellationToken = default)
+                             CancellationToken cancellationToken = default,
+                             int[] instructTokenIds = null,
+                             bool voiceDesign = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var cfg = _embeddings.Config;
         
-        // Build prefill embedding
-        var (inputsEmbeds, trailingTextHidden) = BuildPrefillEmbedding(
-            tokenIds, speakerId, language, cfg, speakerEmbedding,
-            refTokenIds, refAudioCodes);
+        var (inputsEmbeds, trailingTextHidden) = voiceDesign
+            ? BuildVoiceDesignPrefill(tokenIds, instructTokenIds, language, cfg)
+            : BuildPrefillEmbedding(
+                tokenIds, speakerId, language, cfg, speakerEmbedding,
+                refTokenIds, refAudioCodes);
         int prefillLen = inputsEmbeds.GetLength(1);
 
         // Attention mask: all 1s
@@ -406,6 +424,134 @@ internal sealed class LanguageModel : IDisposable
                 result[0, g, t] = generatedCodes[t][g];
 
         return result;
+    }
+
+    /// <summary>
+    /// VoiceDesign non-streaming prefill: instruct embeds, assistant role, codec prefix
+    /// without a speaker token, all text + eos in prefill, trailing is tts_pad only.
+    /// Matches tools/qwen3_tts_onnx/generate_onnx.py.
+    /// </summary>
+    private (float[,,], float[,]) BuildVoiceDesignPrefill(
+        int[] assistantTokenIds, int[] instructTokenIds, string language, ModelConfig cfg)
+    {
+        if (assistantTokenIds == null || assistantTokenIds.Length < 8)
+            throw new ArgumentException("Assistant prompt produced too few tokens.", nameof(assistantTokenIds));
+
+        var allEmbeds = new List<float[]>();
+        var textEmbBuf = new float[2048];
+        var projBuf = new float[_hiddenSize];
+
+        if (instructTokenIds != null)
+        {
+            for (int i = 0; i < instructTokenIds.Length; i++)
+            {
+                _embeddings.TextEmbedding(instructTokenIds[i], textEmbBuf);
+                _embeddings.TextProjection(textEmbBuf, projBuf);
+                allEmbeds.Add((float[])projBuf.Clone());
+            }
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            _embeddings.TextEmbedding(assistantTokenIds[i], textEmbBuf);
+            _embeddings.TextProjection(textEmbBuf, projBuf);
+            allEmbeds.Add((float[])projBuf.Clone());
+        }
+
+        Span<float> ttsPadTextEmbed = stackalloc float[2048];
+        Span<float> ttsBosTextEmbed = stackalloc float[2048];
+        Span<float> ttsEosTextEmbed = stackalloc float[2048];
+        var ttsPadProj = new float[_hiddenSize];
+        var ttsBosProj = new float[_hiddenSize];
+        var ttsEosProj = new float[_hiddenSize];
+        _embeddings.TextEmbedding(cfg.tts.tts_pad_token_id, ttsPadTextEmbed);
+        _embeddings.TextProjection(ttsPadTextEmbed, ttsPadProj);
+        _embeddings.TextEmbedding(cfg.tts.tts_bos_token_id, ttsBosTextEmbed);
+        _embeddings.TextProjection(ttsBosTextEmbed, ttsBosProj);
+        _embeddings.TextEmbedding(cfg.tts.tts_eos_token_id, ttsEosTextEmbed);
+        _embeddings.TextProjection(ttsEosTextEmbed, ttsEosProj);
+
+        var codecPrefix = new List<int>();
+        if (!string.Equals(language, "auto", StringComparison.OrdinalIgnoreCase))
+        {
+            codecPrefix.Add(cfg.talker.codec_think_id);
+            codecPrefix.Add(cfg.talker.codec_think_bos_id);
+            var normalizedLanguage = language.ToLowerInvariant();
+            if (!cfg.language_ids.TryGetValue(normalizedLanguage, out var languageId))
+            {
+                var supportedLanguages = string.Join(", ", cfg.language_ids.Keys.OrderBy(x => x));
+                throw new ArgumentException(
+                    $"Unsupported language '{language}'. Supported languages: {supportedLanguages}",
+                    nameof(language));
+            }
+            codecPrefix.Add(languageId);
+            codecPrefix.Add(cfg.talker.codec_think_eos_id);
+        }
+        else
+        {
+            codecPrefix.Add(cfg.talker.codec_nothink_id);
+            codecPrefix.Add(cfg.talker.codec_think_bos_id);
+            codecPrefix.Add(cfg.talker.codec_think_eos_id);
+        }
+
+        var codecEmbBuf = new float[_hiddenSize];
+        for (int i = 0; i < codecPrefix.Count; i++)
+        {
+            _embeddings.TalkerCodecEmbedding(codecPrefix[i], codecEmbBuf);
+            var combined = new float[_hiddenSize];
+            for (int j = 0; j < _hiddenSize; j++)
+                combined[j] = ttsPadProj[j] + codecEmbBuf[j];
+            allEmbeds.Add(combined);
+        }
+
+        {
+            _embeddings.TalkerCodecEmbedding(cfg.talker.codec_pad_id, codecEmbBuf);
+            var combined = new float[_hiddenSize];
+            for (int j = 0; j < _hiddenSize; j++)
+                combined[j] = ttsBosProj[j] + codecEmbBuf[j];
+            allEmbeds.Add(combined);
+        }
+
+        var codecPadEmbed = new float[_hiddenSize];
+        _embeddings.TalkerCodecEmbedding(cfg.talker.codec_pad_id, codecPadEmbed);
+        for (int i = 3; i < assistantTokenIds.Length - 5; i++)
+        {
+            _embeddings.TextEmbedding(assistantTokenIds[i], textEmbBuf);
+            _embeddings.TextProjection(textEmbBuf, projBuf);
+            var combined = new float[_hiddenSize];
+            for (int j = 0; j < _hiddenSize; j++)
+                combined[j] = projBuf[j] + codecPadEmbed[j];
+            allEmbeds.Add(combined);
+        }
+        {
+            var combined = new float[_hiddenSize];
+            for (int j = 0; j < _hiddenSize; j++)
+                combined[j] = ttsEosProj[j] + codecPadEmbed[j];
+            allEmbeds.Add(combined);
+        }
+
+        {
+            var codecBosEmbed = new float[_hiddenSize];
+            _embeddings.TalkerCodecEmbedding(cfg.talker.codec_bos_id, codecBosEmbed);
+            var combined = new float[_hiddenSize];
+            for (int j = 0; j < _hiddenSize; j++)
+                combined[j] = ttsPadProj[j] + codecBosEmbed[j];
+            allEmbeds.Add(combined);
+        }
+
+        var trailingList = new List<float[]> { ttsPadProj };
+
+        var inputsEmbeds = new float[1, allEmbeds.Count, _hiddenSize];
+        for (int i = 0; i < allEmbeds.Count; i++)
+            for (int j = 0; j < _hiddenSize; j++)
+                inputsEmbeds[0, i, j] = allEmbeds[i][j];
+
+        var trailingTextHidden = new float[trailingList.Count, _hiddenSize];
+        for (int i = 0; i < trailingList.Count; i++)
+            for (int j = 0; j < _hiddenSize; j++)
+                trailingTextHidden[i, j] = trailingList[i][j];
+
+        return (inputsEmbeds, trailingTextHidden);
     }
 
     private (float[,,], float[,]) BuildPrefillEmbedding(int[] tokenIds, int speakerId, string language, ModelConfig cfg,

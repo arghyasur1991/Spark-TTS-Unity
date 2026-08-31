@@ -194,9 +194,11 @@ namespace SparkTTS.Qwen.Models
 
         static Dictionary<string, int> LoadSpeakerIds(string path)
         {
+            if (!File.Exists(path))
+                return new Dictionary<string, int>();
             var speakerJson = File.ReadAllText(path);
             return JsonConvert.DeserializeObject<Dictionary<string, int>>(speakerJson)
-                ?? throw new InvalidDataException("Failed to parse speaker_ids.json");
+                ?? new Dictionary<string, int>();
         }
 
         void PrecomputeProjected()

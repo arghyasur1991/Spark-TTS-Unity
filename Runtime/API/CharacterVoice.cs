@@ -20,6 +20,7 @@ namespace SparkTTS
         public string Gender { get; private set; }
         public string Pitch { get; private set; }
         public string Speed { get; private set; }
+        public string Instruct { get; private set; }
 
         private AudioClip _lastGeneratedClip;
         private readonly QwenTtsEngine _engine;
@@ -32,12 +33,14 @@ namespace SparkTTS
             string referenceText,
             string gender,
             string pitch,
-            string speed)
+            string speed,
+            string instruct = null)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             Gender = gender.ToLower();
             Pitch = pitch.ToLower();
             Speed = speed.ToLower();
+            Instruct = instruct;
         }
 
         internal CharacterVoice(QwenTtsEngine engine)
@@ -60,6 +63,7 @@ namespace SparkTTS
             Gender = voiceConfig.gender;
             Pitch = voiceConfig.pitch;
             Speed = voiceConfig.speed;
+            Instruct = voiceConfig.instruct;
 
             string audioFilePath = Path.Combine(voiceFolder, voiceConfig.audioFile ?? "sample.wav");
             if (File.Exists(audioFilePath))
@@ -91,6 +95,7 @@ namespace SparkTTS
                 gender = Gender,
                 pitch = Pitch,
                 speed = Speed,
+                instruct = Instruct,
                 timestamp = DateTime.UtcNow,
                 audioFile = "sample.wav",
                 sampleRate = ReferenceClip != null ? ReferenceClip.frequency : QwenTtsEngine.NativeSampleRate,
@@ -145,10 +150,9 @@ namespace SparkTTS
                 }
                 else
                 {
-                    string speaker = QwenStyleMap.SpeakerForGender(Gender);
-                    string instruct = QwenStyleMap.InstructFor(Pitch, Speed);
+                    string instruct = QwenStyleMap.VoiceDesignInstruct(Gender, Pitch, Speed, Instruct);
                     pcm24 = await BackgroundWork.Run(
-                        () => _engine.Synthesize(text, speaker, QwenStyleMap.DefaultLanguage, instruct));
+                        () => _engine.Synthesize(text, speaker: null, QwenStyleMap.DefaultLanguage, instruct));
                 }
 
                 if (pcm24 == null || pcm24.Length == 0)
@@ -226,6 +230,7 @@ namespace SparkTTS
         public string gender;
         public string pitch;
         public string speed;
+        public string instruct;
         public string timestamp;
         public string audioFile;
         public int sampleRate;
