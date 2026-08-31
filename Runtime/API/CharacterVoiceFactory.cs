@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
 using TTSLogger = SparkTTS.Utils.Logger;
@@ -25,6 +26,12 @@ namespace SparkTTS
         /// True after embeddings/tokenizers are constructed (ONNX sessions may still be deferred).
         /// </summary>
         public static bool HasEngine => Instance._engine != null && !Instance._disposed;
+
+        /// <summary>
+        /// When true, editor domain reload detaches native ONNX sessions instead
+        /// of OrtReleaseSession so the next domain can wrap them. Set from the host.
+        /// </summary>
+        public static bool KeepNativeSessionsAcrossReload { get; set; }
 
         /// <summary>
         /// Gets whether the factory is initialized and ready for use.
@@ -237,6 +244,22 @@ namespace SparkTTS
             {
                 if (_engine != null)
                     return;
+#if UNITY_EDITOR
+                var pending = NativeSessionKeepAlive.TakePending();
+                if (pending != null && pending.Count > 0)
+                {
+                    _engine = new QwenTtsEngine(ep);
+                    _engine.AdoptNativeSessions(pending);
+                    foreach (var leftover in pending.Values)
+                    {
+                        leftover.Dispose();
+                    }
+                    TTSLogger.Log(
+                        $"[CharacterVoiceFactory] Adopted {(_engine.HasCustomVoice ? "style" : "")}" +
+                        $"{(_engine.HasClone ? " clone" : "")} ONNX sessions after domain reload");
+                    return;
+                }
+#endif
                 _engine = new QwenTtsEngine(ep);
                 TTSLogger.LogVerbose(
                     $"[CharacterVoiceFactory] Qwen engine ready (EP {ep}, " +
@@ -255,8 +278,63 @@ namespace SparkTTS
             Instance._engine = null;
             Instance._engineTask = null;
             Instance._disposed = false;
+#if UNITY_EDITOR
+            NativeSessionKeepAlive.DisposePending();
+#endif
             TTSLogger.Log("[CharacterVoiceFactory] Unloaded Qwen3-TTS engine");
         }
+
+#if UNITY_EDITOR
+        /// <summary>
+        /// Detach native ONNX handles so domain reload does not OrtReleaseSession.
+        /// No-op unless <see cref="KeepNativeSessionsAcrossReload"/> is set.
+        /// </summary>
+        public static void StashNativeForReload()
+        {
+            if (!KeepNativeSessionsAcrossReload)
+                return;
+
+            var sessions = new List<(string key, IntPtr handle)>();
+            if (Instance._engine != null)
+            {
+                var models = new List<ORTModel>();
+                Instance._engine.CollectOnnxModels(models);
+                foreach (var model in models)
+                {
+                    if (model.TryStealNativeSession(out var key, out var handle) && handle != IntPtr.Zero)
+                        sessions.Add((key, handle));
+                }
+            }
+            else
+            {
+                var pending = NativeSessionKeepAlive.TakePending();
+                if (pending != null)
+                {
+                    foreach (var kv in pending)
+                    {
+                        var handle = NativeSessionKeepAlive.DetachSessionHandle(kv.Value);
+                        if (handle != IntPtr.Zero)
+                            sessions.Add((kv.Key, handle));
+                    }
+                }
+            }
+
+            if (sessions.Count == 0)
+                return;
+
+            var env = NativeSessionKeepAlive.DetachOrtEnv();
+            NativeSessionKeepAlive.Stash(env, sessions);
+        }
+
+        /// <summary>
+        /// Wrap stashed native sessions after a domain reload. Engine construct
+        /// adopts them on the next <see cref="WaitForModelsLoadedAsync"/>.
+        /// </summary>
+        public static void TryRestoreNativeAfterReload()
+        {
+            NativeSessionKeepAlive.TryRestore();
+        }
+#endif
 
         public void Dispose()
         {

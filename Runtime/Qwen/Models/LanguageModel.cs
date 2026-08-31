@@ -721,6 +721,13 @@ internal sealed class LanguageModel : IDisposable
             nextInputBuf[i] += cpEmbed[i];
     }
 
+    internal void CollectOnnxModels(List<ORTModel> list)
+    {
+        list.Add(_prefill);
+        list.Add(_decode);
+        list.Add(_codePredictor);
+    }
+
     internal void PreloadSessions()
     {
         GetPrefillSession();

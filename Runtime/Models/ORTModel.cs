@@ -569,6 +569,38 @@ namespace SparkTTS.Models
 
         protected string ModelFilePath => GetModelPath(_config.ModelName);
 
+        internal string SessionKeepAliveKey => GetModelPath(_config.ModelName);
+
+        internal bool HasLoadedSession => _session != null && !_disposed;
+
+        internal bool TryStealNativeSession(out string key, out IntPtr handle)
+        {
+            key = SessionKeepAliveKey;
+            handle = IntPtr.Zero;
+            if (_session == null)
+                return false;
+#if UNITY_EDITOR
+            handle = NativeSessionKeepAlive.DetachSessionHandle(_session);
+#endif
+            _session = null;
+            _loadTask = null;
+            IsInitialized = false;
+            return handle != IntPtr.Zero;
+        }
+
+        internal void AdoptSession(InferenceSession session)
+        {
+            if (session == null)
+                throw new ArgumentNullException(nameof(session));
+            _session?.Dispose();
+            _session = session;
+            _inputNames = session.InputMetadata.Keys.ToList();
+            _inputs = new List<NamedOnnxValue>(_inputNames.Count);
+            _loadTask = Task.FromResult(session);
+            _disposed = false;
+            IsInitialized = true;
+        }
+
         /// <summary>
         /// Sets the logging parameter context for ONNX Runtime operations.
         /// </summary>
@@ -674,6 +706,8 @@ namespace SparkTTS.Models
 
         /// <summary>
         /// Initializes ONNX Runtime logging with Unity integration.
+        /// Default OrtEnv only — a custom logger delegate becomes a dangling
+        /// native fn ptr after an editor domain reload.
         /// </summary>
         private static void InitializeOnnxLogging()
         {
@@ -688,31 +722,20 @@ namespace SparkTTS.Models
 
             if (OrtEnv.IsCreated)
             {
-                Logger.Log("[ORTModel] ONNX Runtime logging already initialized");
+                Logger.Log("[ORTModel] ONNX Runtime environment already created");
                 _loggingInitialized = true;
                 return;
             }
 
             try
             {
-                _loggingParam = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(LoadingInfo)));
-                
-                var options = new EnvironmentCreationOptions
-                {
-                    logLevel = _ortLogLevel,
-                    logId = "SparkTTS",
-                    loggingFunction = UnityOnnxLoggingCallback,
-                    loggingParam = _loggingParam
-                };
-
-                OrtEnv.CreateInstanceWithOptions(ref options);
-                
+                _ = OrtEnv.Instance();
                 _loggingInitialized = true;
-                Logger.Log($"[ORTModel] ONNX Runtime logging initialized (LogLevel: {_ortLogLevel})");
+                Logger.Log($"[ORTModel] ONNX Runtime environment ready (LogLevel: {_ortLogLevel})");
             }
             catch (Exception e)
             {
-                Logger.LogError($"[ORTModel] Failed to initialize ONNX Runtime logging: {e.Message}");
+                Logger.LogError($"[ORTModel] Failed to initialize ONNX Runtime: {e.Message}");
                 _loggingInitialized = true;
             }
         }

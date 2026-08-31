@@ -85,7 +85,7 @@ Every Qwen ONNX file is an `ORTModel` (`QwenOnnxModel` or a named subclass). Ses
 
 CustomVoice (npy embeddings + `position_ids`) and Base (ONNX embeddings, no `position_ids`) keep **two generate loops** — the graphs are not drop-in. One engine (`QwenTtsEngine`), one vocoder class, one sampler, one path class.
 
-`WaitForModelsLoadedAsync` constructs the engine (tokenizer / embeddings) off the Unity main thread. Large ONNX sessions stay deferred until the first generate or clone extract; that construct also uses the thread pool. `CharacterVoiceFactory.UnloadModels()` drops the engine so RAM can be freed without a domain reload.
+`WaitForModelsLoadedAsync` constructs the engine (tokenizer / embeddings) off the Unity main thread. Large ONNX sessions stay deferred until the first generate or clone extract; that construct also uses the thread pool. `CharacterVoiceFactory.UnloadModels()` drops the engine so RAM can be freed without a domain reload. In the editor, `KeepNativeSessionsAcrossReload` detaches native ONNX sessions before a domain reload and wraps them after so a script compile does not rebuild the graphs.
 
 ## Clone notes
 

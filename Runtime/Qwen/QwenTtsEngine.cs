@@ -9,6 +9,7 @@ using SparkTTS.Models;
 using SparkTTS.Qwen.Models;
 using SparkTTS.Utils;
 using UnityEngine;
+using Microsoft.ML.OnnxRuntime;
 using TTSLogger = SparkTTS.Utils.Logger;
 
 namespace SparkTTS.Qwen
@@ -220,6 +221,33 @@ namespace SparkTTS.Qwen
             _cloneTokenizer?.Dispose();
             _talker?.Dispose();
             _speakerEncoder?.Dispose();
+        }
+
+        internal void CollectOnnxModels(List<ORTModel> list)
+        {
+            _languageModel?.CollectOnnxModels(list);
+            if (_styleVocoder != null)
+                list.Add(_styleVocoder);
+            _talker?.CollectOnnxModels(list);
+            if (_speakerEncoder != null)
+                list.Add(_speakerEncoder);
+        }
+
+        internal void AdoptNativeSessions(Dictionary<string, InferenceSession> sessions)
+        {
+            if (sessions == null || sessions.Count == 0)
+                return;
+            var models = new List<ORTModel>();
+            CollectOnnxModels(models);
+            foreach (var model in models)
+            {
+                if (sessions.TryGetValue(model.SessionKeepAliveKey, out var session))
+                {
+                    model.AdoptSession(session);
+                    sessions.Remove(model.SessionKeepAliveKey);
+                    TTSLogger.LogVerbose("[QwenTtsEngine] Adopted " + model.SessionKeepAliveKey);
+                }
+            }
         }
 
         private (float[,,] embeds, long[,] mask, float[,,] trailing, float[] ttsPad)

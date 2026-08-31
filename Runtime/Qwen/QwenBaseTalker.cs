@@ -236,6 +236,17 @@ namespace SparkTTS.Qwen
             return _vocoder.Decode(codes, cancellationToken);
         }
 
+        internal void CollectOnnxModels(List<ORTModel> list)
+        {
+            list.Add(_textProject);
+            list.Add(_codecEmbed);
+            list.Add(_cpEmbed);
+            list.Add(_prefill);
+            list.Add(_decode);
+            list.Add(_codePredictor);
+            list.Add(_vocoder);
+        }
+
         internal void PreloadSessions()
         {
             _textProject.GetSession();
