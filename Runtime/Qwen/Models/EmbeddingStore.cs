@@ -3,394 +3,443 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 
 namespace SparkTTS.Qwen.Models
 {
-
-/// <summary>
-/// Loads and provides access to all embedding matrices (.npy files).
-/// Includes text embeddings, projection layers, codec embeddings, and speaker IDs.
-/// </summary>
-internal sealed class EmbeddingStore : IDisposable
-{
-    private readonly float[,] _textEmbedding;           // (vocab_size, text_hidden_size)
-    private readonly float[,] _fc1Weight;               // (fc1_out, text_hidden_size)
-    private readonly float[] _fc1Bias;                  // (fc1_out,)
-    private readonly float[,] _fc2Weight;               // (hidden_size, fc1_out)
-    private readonly float[] _fc2Bias;                  // (hidden_size,)
-    private readonly float[,] _talkerCodecEmbedding;    // (vocab, hidden_size)
-    private readonly float[][,] _cpCodecEmbeddings;     // 15 × (cp_vocab, cp_hidden)
-    private readonly Dictionary<string, int> _speakerIds;
-
-    // Optional CP projection weights (only present for 1.7B with re-exported code_predictor)
-    private readonly float[,] _cpProjectionWeight;  // (cp_hidden, talker_hidden) = (1024, 2048) for 1.7B
-    private readonly float[] _cpProjectionBias;      // (cp_hidden,) = (1024,) for 1.7B
-
-    // Pre-computed projected embedding tables (avoids per-step matrix-vector multiplies during inference)
-    private readonly float[][,] _projectedCpCodecEmbeddings;     // 15 × (cp_vocab, cpModelHiddenSize)
-    private readonly float[,] _projectedTalkerCodecEmbedding;    // (talker_vocab, cpModelHiddenSize)
-
-    // Dimensions derived from loaded arrays — no hardcoding
-    private readonly int _textHiddenSize;   // text embedding dim (2048 for both 0.6B and 1.7B)
-    private readonly int _fc1OutSize;       // intermediate MLP size
-    private readonly int _hiddenSize;       // talker hidden_size (1024 for 0.6B, 2048 for 1.7B)
-    private readonly int _cpHiddenSize;     // CP embedding dim (1024 for both variants)
-    private readonly int _cpModelHiddenSize; // authoritative CP hidden_size from config.json (for ONNX input dim)
-    
-    public ModelConfig Config { get; }
-
-    /// <summary>Talker hidden_size derived from loaded embedding dimensions.</summary>
-    public int HiddenSize => _hiddenSize;
-
-    /// <summary>Text embedding dimension derived from loaded data.</summary>
-    public int TextHiddenSize => _textHiddenSize;
-
-    /// <summary>Code Predictor embedding dimension derived from loaded data.</summary>
-    public int CpHiddenSize => _cpHiddenSize;
-
-    /// <summary>Whether CP projection weights are loaded (true for 1.7B with re-exported code_predictor).</summary>
-    public bool HasCpProjection => _cpProjectionWeight != null;
-
-    /// <summary>Authoritative Code Predictor model hidden_size from config.json (for ONNX input dim).</summary>
-    public int CpModelHiddenSize => _cpModelHiddenSize;
-
-    public EmbeddingStore(string embeddingsDir, string configPath)
+    /// <summary>
+    /// Embedding matrices in AllocHGlobal. Editor keep-alive stashes the
+    /// pointers across domain reload so 1.5 GB npy + CP projection tables
+    /// are not rebuilt.
+    /// </summary>
+    internal sealed class EmbeddingStore : IDisposable
     {
-        // Load config
-        var configJson = File.ReadAllText(configPath);
-        Config = JsonConvert.DeserializeObject<ModelConfig>(configJson)
-            ?? throw new InvalidDataException("Failed to parse config.json");
+        public const int CpGroupCount = 15;
+        public const int NativeSlotCount = 39;
 
-        // Load text embedding and projection
-        _textEmbedding = NpyReader.ReadFloat2D(Path.Combine(embeddingsDir, "text_embedding.npy"));
-        _fc1Weight = NpyReader.ReadFloat2D(Path.Combine(embeddingsDir, "text_projection_fc1_weight.npy"));
-        _fc1Bias = NpyReader.ReadFloat1D(Path.Combine(embeddingsDir, "text_projection_fc1_bias.npy"));
-        _fc2Weight = NpyReader.ReadFloat2D(Path.Combine(embeddingsDir, "text_projection_fc2_weight.npy"));
-        _fc2Bias = NpyReader.ReadFloat1D(Path.Combine(embeddingsDir, "text_projection_fc2_bias.npy"));
+        NativeFloatBuffer _textEmbedding;
+        NativeFloatBuffer _fc1Weight;
+        NativeFloatBuffer _fc1Bias;
+        NativeFloatBuffer _fc2Weight;
+        NativeFloatBuffer _fc2Bias;
+        NativeFloatBuffer _talkerCodecEmbedding;
+        readonly NativeFloatBuffer[] _cpCodecEmbeddings = new NativeFloatBuffer[CpGroupCount];
+        Dictionary<string, int> _speakerIds;
 
-        // Load talker codec embedding
-        _talkerCodecEmbedding = NpyReader.ReadFloat2D(Path.Combine(embeddingsDir, "talker_codec_embedding.npy"));
+        NativeFloatBuffer _cpProjectionWeight;
+        NativeFloatBuffer _cpProjectionBias;
+        NativeFloatBuffer[] _projectedCpCodecEmbeddings;
+        NativeFloatBuffer _projectedTalkerCodecEmbedding;
 
-        // Load CP codec embeddings (15 groups)
-        _cpCodecEmbeddings = new float[15][,];
-        for (int i = 0; i < 15; i++)
+        readonly int _textHiddenSize;
+        readonly int _fc1OutSize;
+        readonly int _hiddenSize;
+        readonly int _cpHiddenSize;
+        readonly int _cpModelHiddenSize;
+        bool _ownsNative = true;
+
+        public ModelConfig Config { get; }
+
+        public int HiddenSize => _hiddenSize;
+        public int TextHiddenSize => _textHiddenSize;
+        public int CpHiddenSize => _cpHiddenSize;
+        public bool HasCpProjection => _cpProjectionWeight != null && !_cpProjectionWeight.IsEmpty;
+        public int CpModelHiddenSize => _cpModelHiddenSize;
+
+        public EmbeddingStore(string embeddingsDir, string configPath)
         {
-            var path = Path.Combine(embeddingsDir, $"cp_codec_embedding_{i}.npy");
-            _cpCodecEmbeddings[i] = NpyReader.ReadFloat2D(path);
+            Config = LoadConfig(configPath);
+
+            NativeFloatBuffer text = null, fc1w = null, fc1b = null, fc2w = null, fc2b = null, talker = null;
+            var cpLocal = new NativeFloatBuffer[CpGroupCount];
+            Parallel.Invoke(
+                () => text = NpyReader.ReadNative2D(Path.Combine(embeddingsDir, "text_embedding.npy")),
+                () => fc1w = NpyReader.ReadNative2D(Path.Combine(embeddingsDir, "text_projection_fc1_weight.npy")),
+                () => fc1b = NpyReader.ReadNative1D(Path.Combine(embeddingsDir, "text_projection_fc1_bias.npy")),
+                () => fc2w = NpyReader.ReadNative2D(Path.Combine(embeddingsDir, "text_projection_fc2_weight.npy")),
+                () => fc2b = NpyReader.ReadNative1D(Path.Combine(embeddingsDir, "text_projection_fc2_bias.npy")),
+                () => talker = NpyReader.ReadNative2D(Path.Combine(embeddingsDir, "talker_codec_embedding.npy")),
+                () =>
+                {
+                    Parallel.For(0, CpGroupCount, i =>
+                    {
+                        cpLocal[i] = NpyReader.ReadNative2D(
+                            Path.Combine(embeddingsDir, $"cp_codec_embedding_{i}.npy"));
+                    });
+                });
+            _textEmbedding = text;
+            _fc1Weight = fc1w;
+            _fc1Bias = fc1b;
+            _fc2Weight = fc2w;
+            _fc2Bias = fc2b;
+            _talkerCodecEmbedding = talker;
+            for (int i = 0; i < CpGroupCount; i++)
+                _cpCodecEmbeddings[i] = cpLocal[i];
+
+            _speakerIds = LoadSpeakerIds(Path.Combine(embeddingsDir, "speaker_ids.json"));
+            _textHiddenSize = _textEmbedding.Cols;
+            _fc1OutSize = _fc1Weight.Rows;
+            _hiddenSize = _fc2Weight.Rows;
+            _cpHiddenSize = _cpCodecEmbeddings[0].Cols;
+            _cpModelHiddenSize = Config.code_predictor.hidden_size > 0
+                ? Config.code_predictor.hidden_size
+                : _cpHiddenSize;
+
+            var projWeightPath = Path.Combine(embeddingsDir, "cp_projection_weight.npy");
+            var projBiasPath = Path.Combine(embeddingsDir, "cp_projection_bias.npy");
+            if (File.Exists(projWeightPath) && File.Exists(projBiasPath))
+            {
+                _cpProjectionWeight = NpyReader.ReadNative2D(projWeightPath);
+                _cpProjectionBias = NpyReader.ReadNative1D(projBiasPath);
+                if (_cpProjectionWeight.Rows != _cpProjectionBias.Rows)
+                    throw new InvalidDataException(
+                        $"CP projection dimension mismatch: weight rows ({_cpProjectionWeight.Rows}) != bias length ({_cpProjectionBias.Rows})");
+                if (_cpProjectionWeight.Cols != _hiddenSize)
+                    throw new InvalidDataException(
+                        $"CP projection input mismatch: weight columns ({_cpProjectionWeight.Cols}) != hidden_size ({_hiddenSize})");
+                PrecomputeProjected();
+            }
         }
 
-        // Load speaker IDs
-        var speakerIdsPath = Path.Combine(embeddingsDir, "speaker_ids.json");
-        var speakerJson = File.ReadAllText(speakerIdsPath);
-        _speakerIds = JsonConvert.DeserializeObject<Dictionary<string, int>>(speakerJson)
-            ?? throw new InvalidDataException("Failed to parse speaker_ids.json");
-
-        // Derive dimensions from loaded arrays
-        _textHiddenSize = _textEmbedding.GetLength(1);
-        _fc1OutSize = _fc1Weight.GetLength(0);
-        _hiddenSize = _fc2Weight.GetLength(0);
-        _cpHiddenSize = _cpCodecEmbeddings[0].GetLength(1);
-
-        // Authoritative CP hidden_size: prefer config.json, fall back to array-derived value
-        _cpModelHiddenSize = Config.code_predictor.hidden_size > 0
-            ? Config.code_predictor.hidden_size
-            : _cpHiddenSize;
-
-        // Optional: load CP projection weights (only present for 1.7B with re-exported code_predictor)
-        var projWeightPath = Path.Combine(embeddingsDir, "cp_projection_weight.npy");
-        var projBiasPath = Path.Combine(embeddingsDir, "cp_projection_bias.npy");
-        if (File.Exists(projWeightPath) && File.Exists(projBiasPath))
+        EmbeddingStore(string embeddingsDir, string configPath, NativeEmbSlot[] slots)
         {
-            _cpProjectionWeight = NpyReader.ReadFloat2D(projWeightPath);
-            _cpProjectionBias = NpyReader.ReadFloat1D(projBiasPath);
+            Config = LoadConfig(configPath);
+            _speakerIds = LoadSpeakerIds(Path.Combine(embeddingsDir, "speaker_ids.json"));
+            if (slots == null || slots.Length != NativeSlotCount)
+                throw new ArgumentException("Keep-alive embedding slot count is invalid.");
 
-            // Validate projection weight output dim matches bias length
-            if (_cpProjectionWeight.GetLength(0) != _cpProjectionBias.Length)
-                throw new InvalidDataException(
-                    $"CP projection dimension mismatch: weight rows ({_cpProjectionWeight.GetLength(0)}) != bias length ({_cpProjectionBias.Length})");
+            _textEmbedding = Wrap(slots[0]);
+            _fc1Weight = Wrap(slots[1]);
+            _fc1Bias = Wrap(slots[2]);
+            _fc2Weight = Wrap(slots[3]);
+            _fc2Bias = Wrap(slots[4]);
+            _talkerCodecEmbedding = Wrap(slots[5]);
+            for (int i = 0; i < CpGroupCount; i++)
+                _cpCodecEmbeddings[i] = Wrap(slots[6 + i]);
 
-            // Validate projection input dim matches talker hidden_size
-            if (_cpProjectionWeight.GetLength(1) != _hiddenSize)
-                throw new InvalidDataException(
-                    $"CP projection input mismatch: weight columns ({_cpProjectionWeight.GetLength(1)}) != hidden_size ({_hiddenSize})");
+            _textHiddenSize = _textEmbedding.Cols;
+            _fc1OutSize = _fc1Weight.Rows;
+            _hiddenSize = _fc2Weight.Rows;
+            _cpHiddenSize = _cpCodecEmbeddings[0].Cols;
+            _cpModelHiddenSize = Config.code_predictor.hidden_size > 0
+                ? Config.code_predictor.hidden_size
+                : _cpHiddenSize;
 
-            // Pre-compute projected embedding tables to avoid per-step matrix-vector multiplies
-            int projOutDim = _cpProjectionWeight.GetLength(0);
-            int projInDim = _cpProjectionWeight.GetLength(1);
-
-            _projectedCpCodecEmbeddings = new float[15][,];
-            Parallel.For(0, 15, g =>
+            if (!IsEmpty(slots[21]))
             {
-                int vocab = _cpCodecEmbeddings[g].GetLength(0);
-                var table = new float[vocab, projOutDim];
-                var tempInput = new float[projInDim];
-                var tempOutput = new float[projOutDim];
+                _cpProjectionWeight = Wrap(slots[21]);
+                _cpProjectionBias = Wrap(slots[22]);
+                _projectedCpCodecEmbeddings = new NativeFloatBuffer[CpGroupCount];
+                for (int i = 0; i < CpGroupCount; i++)
+                    _projectedCpCodecEmbeddings[i] = Wrap(slots[23 + i]);
+                _projectedTalkerCodecEmbedding = Wrap(slots[38]);
+            }
+
+            _ownsNative = true;
+        }
+
+        public static EmbeddingStore FromKeepAliveSlots(string embeddingsDir, string configPath, NativeEmbSlot[] slots)
+        {
+            return new EmbeddingStore(embeddingsDir, configPath, slots);
+        }
+
+        public NativeEmbSlot[] DetachNativeSlots()
+        {
+            var slots = new NativeEmbSlot[NativeSlotCount];
+            Write(slots, 0, _textEmbedding);
+            Write(slots, 1, _fc1Weight);
+            Write(slots, 2, _fc1Bias);
+            Write(slots, 3, _fc2Weight);
+            Write(slots, 4, _fc2Bias);
+            Write(slots, 5, _talkerCodecEmbedding);
+            for (int i = 0; i < CpGroupCount; i++)
+                Write(slots, 6 + i, _cpCodecEmbeddings[i]);
+            if (HasCpProjection)
+            {
+                Write(slots, 21, _cpProjectionWeight);
+                Write(slots, 22, _cpProjectionBias);
+                for (int i = 0; i < CpGroupCount; i++)
+                    Write(slots, 23 + i, _projectedCpCodecEmbeddings[i]);
+                Write(slots, 38, _projectedTalkerCodecEmbedding);
+            }
+
+            _ownsNative = false;
+            return slots;
+        }
+
+        static NativeFloatBuffer Wrap(NativeEmbSlot slot)
+        {
+            if (slot.Ptr == IntPtr.Zero)
+                return null;
+            return NativeFloatBuffer.Wrap(slot.Ptr, slot.Rows, slot.Cols);
+        }
+
+        static bool IsEmpty(NativeEmbSlot slot) => slot.Ptr == IntPtr.Zero || slot.Rows <= 0;
+
+        static void Write(NativeEmbSlot[] slots, int i, NativeFloatBuffer buf)
+        {
+            if (buf == null || buf.IsEmpty)
+                return;
+            slots[i] = new NativeEmbSlot { Rows = buf.Rows, Cols = buf.Cols, Ptr = buf.Ptr };
+        }
+
+        static ModelConfig LoadConfig(string configPath)
+        {
+            var configJson = File.ReadAllText(configPath);
+            return JsonConvert.DeserializeObject<ModelConfig>(configJson)
+                ?? throw new InvalidDataException("Failed to parse config.json");
+        }
+
+        static Dictionary<string, int> LoadSpeakerIds(string path)
+        {
+            var speakerJson = File.ReadAllText(path);
+            return JsonConvert.DeserializeObject<Dictionary<string, int>>(speakerJson)
+                ?? throw new InvalidDataException("Failed to parse speaker_ids.json");
+        }
+
+        void PrecomputeProjected()
+        {
+            int projOutDim = _cpProjectionWeight.Rows;
+            int wRows = _cpProjectionWeight.Rows;
+            int wCols = _cpProjectionWeight.Cols;
+            int cpHidden = _cpHiddenSize;
+            int hidden = _hiddenSize;
+            var wH = _cpProjectionWeight.Ptr;
+            var bH = _cpProjectionBias.Ptr;
+
+            _projectedCpCodecEmbeddings = new NativeFloatBuffer[CpGroupCount];
+            var cpSrc = new IntPtr[CpGroupCount];
+            var cpDstPtr = new IntPtr[CpGroupCount];
+            var cpVocab = new int[CpGroupCount];
+            for (int g = 0; g < CpGroupCount; g++)
+            {
+                cpVocab[g] = _cpCodecEmbeddings[g].Rows;
+                var dst = NativeFloatBuffer.Alloc(cpVocab[g], projOutDim);
+                _projectedCpCodecEmbeddings[g] = dst;
+                cpSrc[g] = _cpCodecEmbeddings[g].Ptr;
+                cpDstPtr[g] = dst.Ptr;
+            }
+
+            Parallel.For(0, CpGroupCount, g =>
+            {
+                int vocab = cpVocab[g];
+                var srcH = cpSrc[g];
+                var dstH = cpDstPtr[g];
                 for (int t = 0; t < vocab; t++)
-                {
-                    for (int j = 0; j < _cpHiddenSize; j++)
-                        tempInput[j] = _cpCodecEmbeddings[g][t, j];
-                    CpProjection(tempInput, tempOutput);
-                    for (int j = 0; j < projOutDim; j++)
-                        table[t, j] = tempOutput[j];
-                }
-                _projectedCpCodecEmbeddings[g] = table;
+                    ProjectRow(wH, bH, srcH, dstH, t, cpHidden, projOutDim, wRows, wCols);
             });
 
-            int talkerVocab = _talkerCodecEmbedding.GetLength(0);
-            _projectedTalkerCodecEmbedding = new float[talkerVocab, projOutDim];
+            int talkerVocab = _talkerCodecEmbedding.Rows;
+            _projectedTalkerCodecEmbedding = NativeFloatBuffer.Alloc(talkerVocab, projOutDim);
+            var talkerSrc = _talkerCodecEmbedding.Ptr;
+            var talkerDst = _projectedTalkerCodecEmbedding.Ptr;
             Parallel.For(0, talkerVocab, t =>
             {
-                var tempInput = new float[projInDim];
-                var tempOutput = new float[projOutDim];
-                for (int j = 0; j < _hiddenSize; j++)
-                    tempInput[j] = _talkerCodecEmbedding[t, j];
-                CpProjection(tempInput, tempOutput);
-                for (int j = 0; j < projOutDim; j++)
-                    _projectedTalkerCodecEmbedding[t, j] = tempOutput[j];
+                ProjectRow(wH, bH, talkerSrc, talkerDst, t, hidden, projOutDim, wRows, wCols);
             });
         }
-        else
+
+        static unsafe void ProjectRow(
+            IntPtr weight, IntPtr bias, IntPtr src, IntPtr dst,
+            int t, int srcDim, int projOutDim, int wRows, int wCols)
         {
-            _cpProjectionWeight = null;
-            _cpProjectionBias = null;
-            _projectedCpCodecEmbeddings = null;
-            _projectedTalkerCodecEmbedding = null;
+            float* inRow = (float*)src + (long)t * srcDim;
+            float* outRow = (float*)dst + (long)t * projOutDim;
+            float* w = (float*)weight;
+            float* b = (float*)bias;
+            for (int i = 0; i < wRows; i++)
+            {
+                float sum = 0;
+                float* wrow = w + (long)i * wCols;
+                for (int j = 0; j < wCols; j++)
+                    sum += wrow[j] * inRow[j];
+                outRow[i] = sum + b[i];
+            }
+        }
+
+        public void TextEmbedding(int tokenId, Span<float> output)
+        {
+            if (output.Length != _textHiddenSize)
+                throw new ArgumentException($"Output must be length {_textHiddenSize}");
+            _textEmbedding.CopyRow(tokenId, output);
+        }
+
+        public void TextProjection(ReadOnlySpan<float> input, Span<float> output)
+        {
+            if (input.Length != _textHiddenSize)
+                throw new ArgumentException($"Input must be length {_textHiddenSize}");
+            if (output.Length != _hiddenSize)
+                throw new ArgumentException($"Output must be length {_hiddenSize}");
+
+            var hidden = new float[_fc1OutSize];
+            MatMul(_fc1Weight, input, hidden);
+            for (int i = 0; i < _fc1OutSize; i++)
+                hidden[i] = SiLU(hidden[i] + At(_fc1Bias, i));
+            MatMul(_fc2Weight, hidden, output);
+            for (int i = 0; i < _hiddenSize; i++)
+                output[i] += At(_fc2Bias, i);
+        }
+
+        public void TalkerCodecEmbedding(int tokenId, Span<float> output)
+        {
+            if (output.Length != _hiddenSize)
+                throw new ArgumentException($"Output must be length {_hiddenSize}");
+            _talkerCodecEmbedding.CopyRow(tokenId, output);
+        }
+
+        public void CpCodecEmbedding(int groupIndex, int tokenId, Span<float> output)
+        {
+            if (groupIndex < 0 || groupIndex >= CpGroupCount)
+                throw new ArgumentException($"groupIndex must be 0-14, got {groupIndex}");
+            if (output.Length != _cpHiddenSize)
+                throw new ArgumentException($"Output must be length {_cpHiddenSize}");
+            _cpCodecEmbeddings[groupIndex].CopyRow(tokenId, output);
+        }
+
+        public void CpProjection(ReadOnlySpan<float> input, Span<float> output)
+        {
+            if (!HasCpProjection)
+                throw new InvalidOperationException("CP projection weights not loaded");
+            if (input.Length < _cpProjectionWeight.Cols)
+                throw new ArgumentException(
+                    $"CP projection input too short: got {input.Length}, need {_cpProjectionWeight.Cols}");
+            if (output.Length < _cpProjectionWeight.Rows)
+                throw new ArgumentException(
+                    $"CP projection output too short: got {output.Length}, need {_cpProjectionWeight.Rows}");
+
+            MatMul(_cpProjectionWeight, input, output);
+            for (int i = 0; i < _cpProjectionWeight.Rows; i++)
+                output[i] += At(_cpProjectionBias, i);
+        }
+
+        public void ProjectedCpCodecEmbedding(int groupIndex, int tokenId, Span<float> output)
+        {
+            if (_projectedCpCodecEmbeddings == null)
+                throw new InvalidOperationException("Projected CP codec embeddings not available");
+            if (groupIndex < 0 || groupIndex >= CpGroupCount)
+                throw new ArgumentException($"groupIndex must be 0-14, got {groupIndex}");
+            _projectedCpCodecEmbeddings[groupIndex].CopyRow(tokenId, output);
+        }
+
+        public void ProjectedTalkerCodecEmbedding(int tokenId, Span<float> output)
+        {
+            if (_projectedTalkerCodecEmbedding == null)
+                throw new InvalidOperationException("Projected talker codec embedding not available");
+            _projectedTalkerCodecEmbedding.CopyRow(tokenId, output);
+        }
+
+        public int GetSpeakerId(string speaker)
+        {
+            if (!_speakerIds.TryGetValue(speaker, out var id))
+                throw new ArgumentException($"Unknown speaker: {speaker}");
+            return id;
+        }
+
+        public IReadOnlyCollection<string> GetAvailableSpeakers() => _speakerIds.Keys;
+
+        public float[] GetSpeakerEmbedding(int speakerId)
+        {
+            var embedding = new float[_hiddenSize];
+            _talkerCodecEmbedding.CopyRow(speakerId, embedding);
+            return embedding;
+        }
+
+        public IEnumerable<(string name, float[] embedding)> GetAllSpeakerEmbeddings()
+        {
+            foreach (var (name, id) in _speakerIds)
+                yield return (name, GetSpeakerEmbedding(id));
+        }
+
+        public void Dispose()
+        {
+            if (!_ownsNative)
+                return;
+            _ownsNative = false;
+            _textEmbedding?.Free();
+            _fc1Weight?.Free();
+            _fc1Bias?.Free();
+            _fc2Weight?.Free();
+            _fc2Bias?.Free();
+            _talkerCodecEmbedding?.Free();
+            for (int i = 0; i < CpGroupCount; i++)
+                _cpCodecEmbeddings[i]?.Free();
+            _cpProjectionWeight?.Free();
+            _cpProjectionBias?.Free();
+            if (_projectedCpCodecEmbeddings != null)
+            {
+                for (int i = 0; i < _projectedCpCodecEmbeddings.Length; i++)
+                    _projectedCpCodecEmbeddings[i]?.Free();
+            }
+            _projectedTalkerCodecEmbedding?.Free();
+        }
+
+        static float SiLU(float x) => x / (1.0f + MathF.Exp(-x));
+
+        static unsafe float At(NativeFloatBuffer buf, int i)
+        {
+            return ((float*)buf.Ptr)[i];
+        }
+
+        static unsafe void MatMul(NativeFloatBuffer weight, ReadOnlySpan<float> input, Span<float> output)
+        {
+            MatMul((float*)weight.Ptr, weight.Rows, weight.Cols, input, output);
+        }
+
+        static unsafe void MatMul(float* weight, int M, int N, ReadOnlySpan<float> input, Span<float> output)
+        {
+            for (int i = 0; i < M; i++)
+            {
+                float sum = 0;
+                float* row = weight + (long)i * N;
+                for (int j = 0; j < N; j++)
+                    sum += row[j] * input[j];
+                output[i] = sum;
+            }
         }
     }
 
-    /// <summary>
-    /// Looks up text embedding for a token ID and writes to output.
-    /// </summary>
-    public void TextEmbedding(int tokenId, Span<float> output)
+    internal sealed class ModelConfig
     {
-        if (output.Length != _textHiddenSize)
-            throw new ArgumentException($"Output must be length {_textHiddenSize}");
-        
-        for (int i = 0; i < _textHiddenSize; i++)
-            output[i] = _textEmbedding[tokenId, i];
+        public TalkerConfig talker { get; set; } = new();
+        public CodePredictorConfig code_predictor { get; set; } = new();
+        public TtsConfig tts { get; set; } = new();
+        public Dictionary<string, int> language_ids { get; set; } = new();
+        public Dictionary<string, object> speaker_dialect { get; set; } = new();
     }
 
-    /// <summary>
-    /// Applies text projection MLP: output = fc2(silu(fc1(input)))
-    /// Maps from text_hidden_size → talker hidden_size.
-    /// </summary>
-    public void TextProjection(ReadOnlySpan<float> input, Span<float> output)
+    internal sealed class TalkerConfig
     {
-        if (input.Length != _textHiddenSize)
-            throw new ArgumentException($"Input must be length {_textHiddenSize}");
-        if (output.Length != _hiddenSize)
-            throw new ArgumentException($"Output must be length {_hiddenSize}");
-
-        // fc1: (fc1_out, text_hidden_size) @ input + bias → hidden
-        var hidden = new float[_fc1OutSize];
-        MatMul(_fc1Weight, input, hidden);
-        for (int i = 0; i < _fc1OutSize; i++)
-            hidden[i] = SiLU(hidden[i] + _fc1Bias[i]);
-
-        // fc2: (hidden_size, fc1_out) @ hidden + bias → output
-        MatMul(_fc2Weight, hidden, output);
-        for (int i = 0; i < _hiddenSize; i++)
-            output[i] += _fc2Bias[i];
+        public int codec_eos_token_id { get; set; }
+        public int codec_pad_id { get; set; }
+        public int codec_bos_id { get; set; }
+        public int codec_think_id { get; set; }
+        public int codec_nothink_id { get; set; }
+        public int codec_think_bos_id { get; set; }
+        public int codec_think_eos_id { get; set; }
+        public int num_code_groups { get; set; }
+        public int hidden_size { get; set; }
+        public int text_hidden_size { get; set; }
+        public int num_hidden_layers { get; set; }
+        public int num_key_value_heads { get; set; }
+        public int head_dim { get; set; }
+        public int vocab_size { get; set; }
     }
 
-    /// <summary>
-    /// Looks up talker codec embedding for a token ID.
-    /// </summary>
-    public void TalkerCodecEmbedding(int tokenId, Span<float> output)
+    internal sealed class CodePredictorConfig
     {
-        if (output.Length != _hiddenSize)
-            throw new ArgumentException($"Output must be length {_hiddenSize}");
-        
-        for (int i = 0; i < _hiddenSize; i++)
-            output[i] = _talkerCodecEmbedding[tokenId, i];
+        public int num_hidden_layers { get; set; }
+        public int num_key_value_heads { get; set; }
+        public int head_dim { get; set; }
+        public int vocab_size { get; set; }
+        public int hidden_size { get; set; }
     }
 
-    /// <summary>
-    /// Looks up CP codec embedding for a group and token ID.
-    /// groupIndex is 0-14 (maps to cp_codec_embedding_0..14).
-    /// </summary>
-    public void CpCodecEmbedding(int groupIndex, int tokenId, Span<float> output)
+    internal sealed class TtsConfig
     {
-        if (groupIndex < 0 || groupIndex >= 15)
-            throw new ArgumentException($"groupIndex must be 0-14, got {groupIndex}");
-        if (output.Length != _cpHiddenSize)
-            throw new ArgumentException($"Output must be length {_cpHiddenSize}");
-        
-        var table = _cpCodecEmbeddings[groupIndex];
-        for (int i = 0; i < _cpHiddenSize; i++)
-            output[i] = table[tokenId, i];
+        public int tts_bos_token_id { get; set; }
+        public int tts_eos_token_id { get; set; }
+        public int tts_pad_token_id { get; set; }
     }
-
-    /// <summary>
-    /// Applies the CP projection: output = weight @ input + bias.
-    /// Maps from talker hidden_size (2048 for 1.7B) → cp_hidden_size (1024).
-    /// Only available when <see cref="HasCpProjection"/> is true.
-    /// </summary>
-    public void CpProjection(ReadOnlySpan<float> input, Span<float> output)
-    {
-        if (_cpProjectionWeight == null || _cpProjectionBias == null)
-            throw new InvalidOperationException("CP projection weights not loaded");
-
-        if (input.Length < _cpProjectionWeight.GetLength(1))
-            throw new ArgumentException(
-                $"CP projection input too short: got {input.Length}, need {_cpProjectionWeight.GetLength(1)}");
-        if (output.Length < _cpProjectionWeight.GetLength(0))
-            throw new ArgumentException(
-                $"CP projection output too short: got {output.Length}, need {_cpProjectionWeight.GetLength(0)}");
-
-        MatMul(_cpProjectionWeight, input, output);
-        int outDim = _cpProjectionWeight.GetLength(0);
-        for (int i = 0; i < outDim; i++)
-            output[i] += _cpProjectionBias[i];
-    }
-
-    /// <summary>
-    /// Looks up pre-projected CP codec embedding (projected from talker space to CP input space at init).
-    /// Avoids per-step matrix-vector multiplies during inference.
-    /// Only available when <see cref="HasCpProjection"/> is true.
-    /// </summary>
-    public void ProjectedCpCodecEmbedding(int groupIndex, int tokenId, Span<float> output)
-    {
-        if (_projectedCpCodecEmbeddings == null)
-            throw new InvalidOperationException("Projected CP codec embeddings not available");
-        if (groupIndex < 0 || groupIndex >= 15)
-            throw new ArgumentException($"groupIndex must be 0-14, got {groupIndex}");
-
-        var table = _projectedCpCodecEmbeddings[groupIndex];
-        int dim = table.GetLength(1);
-        for (int i = 0; i < dim; i++)
-            output[i] = table[tokenId, i];
-    }
-
-    /// <summary>
-    /// Looks up pre-projected talker codec embedding (projected from talker space to CP input space at init).
-    /// Avoids per-step matrix-vector multiplies during inference.
-    /// Only available when <see cref="HasCpProjection"/> is true.
-    /// </summary>
-    public void ProjectedTalkerCodecEmbedding(int tokenId, Span<float> output)
-    {
-        if (_projectedTalkerCodecEmbedding == null)
-            throw new InvalidOperationException("Projected talker codec embedding not available");
-
-        int dim = _projectedTalkerCodecEmbedding.GetLength(1);
-        for (int i = 0; i < dim; i++)
-            output[i] = _projectedTalkerCodecEmbedding[tokenId, i];
-    }
-
-    /// <summary>
-    /// Gets the speaker token ID for a speaker name.
-    /// </summary>
-    public int GetSpeakerId(string speaker)
-    {
-        if (!_speakerIds.TryGetValue(speaker, out var id))
-            throw new ArgumentException($"Unknown speaker: {speaker}");
-        return id;
-    }
-
-    /// <summary>
-    /// Gets the list of available speaker names.
-    /// </summary>
-    public IReadOnlyCollection<string> GetAvailableSpeakers() => _speakerIds.Keys;
-
-    /// <summary>
-    /// Gets the talker codec embedding for a speaker as a float array.
-    /// Used for similarity search and speaker matching.
-    /// </summary>
-    /// <param name="speakerId">Speaker token ID (codec embedding token).</param>
-    /// <returns>Embedding vector (<see cref="HiddenSize"/> dimensions).</returns>
-    public float[] GetSpeakerEmbedding(int speakerId)
-    {
-        var embedding = new float[_hiddenSize];
-        for (int i = 0; i < _hiddenSize; i++)
-            embedding[i] = _talkerCodecEmbedding[speakerId, i];
-        return embedding;
-    }
-
-    /// <summary>
-    /// Gets all speaker embeddings as a collection for similarity search.
-    /// </summary>
-    /// <returns>Tuples of (speakerName, embedding) for all available speakers.</returns>
-    public IEnumerable<(string name, float[] embedding)> GetAllSpeakerEmbeddings()
-    {
-        foreach (var (name, id) in _speakerIds)
-        {
-            yield return (name, GetSpeakerEmbedding(id));
-        }
-    }
-
-    public void Dispose()
-    {
-        // No unmanaged resources
-    }
-
-    private static float SiLU(float x) => x / (1.0f + MathF.Exp(-x));
-
-    /// <summary>
-    /// Matrix-vector multiply: output = weight @ input
-    /// weight is (M, N), input is (N,), output is (M,)
-    /// </summary>
-    private static void MatMul(float[,] weight, ReadOnlySpan<float> input, Span<float> output)
-    {
-        int M = weight.GetLength(0);
-        int N = weight.GetLength(1);
-        
-        for (int i = 0; i < M; i++)
-        {
-            float sum = 0;
-            for (int j = 0; j < N; j++)
-                sum += weight[i, j] * input[j];
-            output[i] = sum;
-        }
-    }
-}
-
-/// <summary>
-/// Model configuration loaded from config.json
-/// </summary>
-internal sealed class ModelConfig
-{
-    public TalkerConfig talker { get; set; } = new();
-    public CodePredictorConfig code_predictor { get; set; } = new();
-    public TtsConfig tts { get; set; } = new();
-    public Dictionary<string, int> language_ids { get; set; } = new();
-    public Dictionary<string, object> speaker_dialect { get; set; } = new();
-}
-
-internal sealed class TalkerConfig
-{
-    public int codec_eos_token_id { get; set; }
-    public int codec_pad_id { get; set; }
-    public int codec_bos_id { get; set; }
-    public int codec_think_id { get; set; }
-    public int codec_nothink_id { get; set; }
-    public int codec_think_bos_id { get; set; }
-    public int codec_think_eos_id { get; set; }
-    public int num_code_groups { get; set; }
-    public int hidden_size { get; set; }
-    public int text_hidden_size { get; set; }
-    public int num_hidden_layers { get; set; }
-    public int num_key_value_heads { get; set; }
-    public int head_dim { get; set; }
-    public int vocab_size { get; set; }
-}
-
-internal sealed class CodePredictorConfig
-{
-    public int num_hidden_layers { get; set; }
-    public int num_key_value_heads { get; set; }
-    public int head_dim { get; set; }
-    public int vocab_size { get; set; }
-    public int hidden_size { get; set; }
-}
-
-internal sealed class TtsConfig
-{
-    public int tts_bos_token_id { get; set; }
-    public int tts_eos_token_id { get; set; }
-    public int tts_pad_token_id { get; set; }
-}
 }

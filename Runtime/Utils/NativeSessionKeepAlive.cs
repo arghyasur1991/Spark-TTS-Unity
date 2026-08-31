@@ -8,6 +8,7 @@ using System.Runtime.Serialization;
 using System.IO;
 using System.Text;
 using Microsoft.ML.OnnxRuntime;
+using SparkTTS.Qwen.Models;
 using TTSLogger = SparkTTS.Utils.Logger;
 
 namespace SparkTTS.Utils
@@ -20,6 +21,7 @@ namespace SparkTTS.Utils
     internal static class NativeSessionKeepAlive
     {
         const int Magic = 0x514B4131; // QKA1
+        const int EmbMagic = 0x454D4231; // EMB1
         const int MaxSessions = 24;
 
         static readonly FieldInfo SessionHandleField = typeof(InferenceSession).GetField(
@@ -37,9 +39,15 @@ namespace SparkTTS.Utils
             "_instance", BindingFlags.Static | BindingFlags.NonPublic);
 
         static Dictionary<string, InferenceSession> _pending;
+        static NativeEmbSlot[] _pendingEmb;
         static bool _envInstalled;
 
         internal static bool HasPending => _pending != null && _pending.Count > 0;
+
+        internal static bool HasPendingEmbeddings =>
+            _pendingEmb != null && _pendingEmb.Length == EmbeddingStore.NativeSlotCount;
+
+        internal static bool HasEngineKeepAlive => HasPending || HasPendingEmbeddings;
 
         internal static void SetKeepRequested(bool value)
         {
@@ -74,14 +82,121 @@ namespace SparkTTS.Utils
 
         internal static void DisposePending()
         {
-            if (_pending == null)
-                return;
-            foreach (var s in _pending.Values)
+            if (_pending != null)
             {
-                try { s?.Dispose(); }
-                catch (Exception ex) { TTSLogger.LogWarning("[SparkTTS] Keep-alive pending dispose: " + ex.Message); }
+                foreach (var s in _pending.Values)
+                {
+                    try { s?.Dispose(); }
+                    catch (Exception ex) { TTSLogger.LogWarning("[SparkTTS] Keep-alive pending dispose: " + ex.Message); }
+                }
+                _pending = null;
             }
-            _pending = null;
+            DisposePendingEmbeddings();
+        }
+
+        internal static NativeEmbSlot[] TakePendingEmbeddings()
+        {
+            var p = _pendingEmb;
+            _pendingEmb = null;
+            return p;
+        }
+
+        internal static void DisposePendingEmbeddings()
+        {
+            if (_pendingEmb == null)
+                return;
+            for (int i = 0; i < _pendingEmb.Length; i++)
+            {
+                if (_pendingEmb[i].Ptr == IntPtr.Zero)
+                    continue;
+                try { Marshal.FreeHGlobal(_pendingEmb[i].Ptr); }
+                catch (Exception ex) { TTSLogger.LogWarning("[SparkTTS] Keep-alive embedding free: " + ex.Message); }
+                _pendingEmb[i].Ptr = IntPtr.Zero;
+            }
+            _pendingEmb = null;
+        }
+
+        internal static void StashEmbeddings(NativeEmbSlot[] slots)
+        {
+            ClearEmbFile();
+            if (slots == null || slots.Length != EmbeddingStore.NativeSlotCount)
+                return;
+
+            int n = slots.Length;
+            int bytes = 4 + 4 + 8 + 4 + n * (4 + 4 + 8);
+            IntPtr blob = Marshal.AllocHGlobal(bytes);
+            IntPtr p = blob;
+            WriteI32(ref p, EmbMagic);
+            WriteI32(ref p, Process.GetCurrentProcess().Id);
+            WriteI64(ref p, Process.GetCurrentProcess().StartTime.ToUniversalTime().Ticks);
+            WriteI32(ref p, n);
+            int kept = 0;
+            for (int i = 0; i < n; i++)
+            {
+                WriteI32(ref p, slots[i].Rows);
+                WriteI32(ref p, slots[i].Cols);
+                WriteI64(ref p, slots[i].Ptr.ToInt64());
+                if (slots[i].Ptr != IntPtr.Zero)
+                    kept++;
+            }
+
+            File.WriteAllText(EmbPath(), blob.ToInt64().ToString());
+            TTSLogger.Log($"[SparkTTS] Stashed {kept} native embedding buffer(s) across domain reload.");
+        }
+
+        internal static bool TryRestoreEmbeddings()
+        {
+            if (HasPendingEmbeddings)
+                return true;
+
+            string path = EmbPath();
+            if (!File.Exists(path))
+                return false;
+            string raw = File.ReadAllText(path).Trim();
+            ClearEmbFile();
+            if (string.IsNullOrEmpty(raw) || !long.TryParse(raw, out long addr) || addr == 0)
+                return false;
+            var blob = new IntPtr(addr);
+            try
+            {
+                IntPtr p = blob;
+                int magic = ReadI32(ref p);
+                int pid = ReadI32(ref p);
+                long startTicks = ReadI64(ref p);
+                int count = ReadI32(ref p);
+                var proc = Process.GetCurrentProcess();
+                if (magic != EmbMagic || pid != proc.Id ||
+                    startTicks != proc.StartTime.ToUniversalTime().Ticks ||
+                    count != EmbeddingStore.NativeSlotCount)
+                {
+                    TTSLogger.LogWarning("[SparkTTS] Embedding keep-alive blob is stale; ignoring.");
+                    return false;
+                }
+
+                var slots = new NativeEmbSlot[count];
+                int kept = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    slots[i].Rows = ReadI32(ref p);
+                    slots[i].Cols = ReadI32(ref p);
+                    slots[i].Ptr = new IntPtr(ReadI64(ref p));
+                    if (slots[i].Ptr != IntPtr.Zero)
+                        kept++;
+                }
+
+                _pendingEmb = slots;
+                TTSLogger.Log($"[SparkTTS] Restored {kept} native embedding buffer(s) after domain reload.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                TTSLogger.LogError("[SparkTTS] Embedding keep-alive restore failed: " + ex.Message);
+                return false;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(blob);
+            }
         }
 
         internal static IntPtr DetachSessionHandle(InferenceSession session)
@@ -260,11 +375,28 @@ namespace SparkTTS.Utils
                 "SparkTTS-QwenKeepAlive-" + Process.GetCurrentProcess().Id + ".ptr");
         }
 
+        static string EmbPath()
+        {
+            return Path.Combine(Path.GetTempPath(),
+                "SparkTTS-QwenKeepAlive-" + Process.GetCurrentProcess().Id + ".emb");
+        }
+
         static void ClearTokenFile()
         {
             try
             {
                 string path = TokenPath();
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch { /* ignore */ }
+        }
+
+        static void ClearEmbFile()
+        {
+            try
+            {
+                string path = EmbPath();
                 if (File.Exists(path))
                     File.Delete(path);
             }

@@ -50,12 +50,25 @@ namespace SparkTTS.Qwen
             {
                 var sw = Stopwatch.StartNew();
                 var embeddingsDir = System.IO.Path.Combine(QwenModelPaths.Root, "embeddings");
+                var configPath = System.IO.Path.Combine(embeddingsDir, "config.json");
                 _styleTokenizer = new TextTokenizer(System.IO.Path.Combine(QwenModelPaths.Root, "tokenizer"));
-                _embeddings = new EmbeddingStore(embeddingsDir, System.IO.Path.Combine(embeddingsDir, "config.json"));
+#if UNITY_EDITOR
+                var pendingEmb = NativeSessionKeepAlive.TakePendingEmbeddings();
+                if (pendingEmb != null)
+                {
+                    _embeddings = EmbeddingStore.FromKeepAliveSlots(embeddingsDir, configPath, pendingEmb);
+                    TTSLogger.Log(
+                        $"[QwenTtsEngine] Wrapped native embeddings after domain reload in {sw.ElapsedMilliseconds}ms");
+                }
+                else
+#endif
+                {
+                    _embeddings = new EmbeddingStore(embeddingsDir, configPath);
+                    TTSLogger.Log(
+                        $"[QwenTtsEngine] CustomVoice embeddings from {QwenModelPaths.Root} in {sw.ElapsedMilliseconds}ms");
+                }
                 _languageModel = new LanguageModel(_embeddings, executionProvider);
                 _styleVocoder = QwenVocoderModel.CustomVoice(executionProvider);
-                TTSLogger.Log(
-                    $"[QwenTtsEngine] CustomVoice embeddings from {QwenModelPaths.Root} in {sw.ElapsedMilliseconds}ms");
             }
 
             if (clone)
@@ -225,6 +238,8 @@ namespace SparkTTS.Qwen
             _talker?.Dispose();
             _speakerEncoder?.Dispose();
         }
+
+        internal NativeEmbSlot[] DetachEmbeddings() => _embeddings?.DetachNativeSlots();
 
         internal void CollectOnnxModels(List<ORTModel> list)
         {

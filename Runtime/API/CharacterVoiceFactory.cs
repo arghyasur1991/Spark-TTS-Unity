@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using UnityEngine;
+using SparkTTS.Qwen.Models;
 using TTSLogger = SparkTTS.Utils.Logger;
 
 namespace SparkTTS
@@ -24,7 +25,7 @@ namespace SparkTTS
 
         /// <summary>
         /// True after embeddings/tokenizers are constructed (ONNX sessions may still be deferred),
-        /// or editor keep-alive has wrapped native sessions that are waiting to be adopted.
+        /// or editor keep-alive has wrapped native sessions / embedding buffers waiting to be adopted.
         /// </summary>
         public static bool HasEngine
         {
@@ -33,7 +34,7 @@ namespace SparkTTS
                 if (Instance._engine != null && !Instance._disposed)
                     return true;
 #if UNITY_EDITOR
-                return NativeSessionKeepAlive.HasPending;
+                return NativeSessionKeepAlive.HasEngineKeepAlive;
 #else
                 return false;
 #endif
@@ -43,8 +44,9 @@ namespace SparkTTS
         static bool _keepAcrossReload;
 
         /// <summary>
-        /// When true, editor domain reload detaches native ONNX sessions instead
-        /// of OrtReleaseSession so the next domain can wrap them. Set from the host.
+        /// When true, editor domain reload detaches native ONNX sessions and
+        /// AllocHGlobal embedding matrices instead of releasing them so the next
+        /// domain can wrap them. Set from the host.
         /// Persisted in a per-process file so stash still runs if the static was reset.
         /// </summary>
         public static bool KeepNativeSessionsAcrossReload
@@ -294,25 +296,33 @@ namespace SparkTTS
         {
             if (Instance._engine != null)
                 return true;
-            if (!NativeSessionKeepAlive.HasPending)
-                return false;
-            var pending = NativeSessionKeepAlive.TakePending();
-            if (pending == null || pending.Count == 0)
+            bool hasSessions = NativeSessionKeepAlive.HasPending;
+            bool hasEmb = NativeSessionKeepAlive.HasPendingEmbeddings;
+            if (!hasSessions && !hasEmb)
                 return false;
 
-            int offered = pending.Count;
+            var pending = hasSessions ? NativeSessionKeepAlive.TakePending() : null;
             Instance._disposed = false;
             Instance._engine = new QwenTtsEngine(ep);
-            Instance._engine.AdoptNativeSessions(pending);
-            int leftover = pending.Count;
-            foreach (var leftoverSession in pending.Values)
+
+            int offered = pending?.Count ?? 0;
+            int leftover = 0;
+            if (pending != null && pending.Count > 0)
             {
-                try { leftoverSession.Dispose(); }
-                catch (Exception ex) { TTSLogger.LogWarning("[CharacterVoiceFactory] leftover session: " + ex.Message); }
+                Instance._engine.AdoptNativeSessions(pending);
+                leftover = pending.Count;
+                foreach (var leftoverSession in pending.Values)
+                {
+                    try { leftoverSession.Dispose(); }
+                    catch (Exception ex) { TTSLogger.LogWarning("[CharacterVoiceFactory] leftover session: " + ex.Message); }
+                }
             }
 
-            TTSLogger.Log(
-                $"[CharacterVoiceFactory] Adopted {offered - leftover}/{offered} ONNX sessions after domain reload");
+            if (offered > 0)
+            {
+                TTSLogger.Log(
+                    $"[CharacterVoiceFactory] Adopted {offered - leftover}/{offered} ONNX sessions after domain reload");
+            }
             return true;
         }
 #endif
@@ -343,9 +353,11 @@ namespace SparkTTS
             if (!KeepNativeSessionsAcrossReload)
                 return;
 
+            NativeEmbSlot[] embeddings = null;
             var sessions = new List<(string key, IntPtr handle)>();
             if (Instance._engine != null)
             {
+                embeddings = Instance._engine.DetachEmbeddings();
                 var models = new List<ORTModel>();
                 Instance._engine.CollectOnnxModels(models);
                 foreach (var model in models)
@@ -356,6 +368,7 @@ namespace SparkTTS
             }
             else
             {
+                embeddings = NativeSessionKeepAlive.TakePendingEmbeddings();
                 var pending = NativeSessionKeepAlive.TakePending();
                 if (pending != null)
                 {
@@ -368,26 +381,28 @@ namespace SparkTTS
                 }
             }
 
-            if (sessions.Count == 0)
-                return;
+            if (sessions.Count > 0)
+            {
+                var env = NativeSessionKeepAlive.DetachOrtEnv();
+                NativeSessionKeepAlive.Stash(env, sessions);
+            }
 
-            var env = NativeSessionKeepAlive.DetachOrtEnv();
-            NativeSessionKeepAlive.Stash(env, sessions);
+            if (embeddings != null)
+                NativeSessionKeepAlive.StashEmbeddings(embeddings);
         }
 
         /// <summary>
-        /// Wrap stashed native sessions. Engine reconstruct (1.5 GB embeddings +
-        /// projection tables) runs on the thread pool so InitializeOnLoad / Play
-        /// domain reload does not block for minutes. ONNX graphs are already native.
+        /// Wrap stashed native ONNX sessions and AllocHGlobal embedding matrices.
+        /// Tokenizer + config.json still come from disk (small). Do not re-read npy.
         /// </summary>
         public static void TryRestoreNativeAfterReload()
         {
             NativeSessionKeepAlive.TryRestore();
-            if (!NativeSessionKeepAlive.HasPending && Instance._engine == null)
+            NativeSessionKeepAlive.TryRestoreEmbeddings();
+            if (!NativeSessionKeepAlive.HasEngineKeepAlive && Instance._engine == null)
                 return;
             TTSLogger.Log(
-                "[CharacterVoiceFactory] Native ONNX sessions restored; " +
-                "loading embeddings off the main thread");
+                "[CharacterVoiceFactory] Native ONNX/embeddings restored; wrapping off the main thread");
             Instance.EnsureEngineAsync();
         }
 #endif
