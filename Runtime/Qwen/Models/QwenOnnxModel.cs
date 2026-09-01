@@ -14,7 +14,9 @@ namespace SparkTTS.Qwen.Models
     /// </summary>
     internal class QwenOnnxModel : ORTModel
     {
-        private const long MaxOnnxBytes = 8_000_000_000;
+        // ElBruno layout is a few MB of protobuf + sibling .onnx.data.
+        // zukky Base talkers are ~5 GB single-file protobufs (InvalidProtobuf).
+        private const long MaxOnnxBytes = 64_000_000;
 
         public QwenOnnxModel(string modelName, string folder, ExecutionProvider executionProvider = ExecutionProvider.CPU)
             : base(modelName, folder, preAllocateOutputs: false, Precision.FP32, executionProvider, deferLoad: true)

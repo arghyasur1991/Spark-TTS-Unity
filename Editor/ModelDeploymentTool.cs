@@ -109,20 +109,33 @@ namespace SparkTTS.Editor
             var files = new[]
             {
                 "talker_prefill.onnx",
+                "talker_prefill.onnx.data",
                 "talker_decode.onnx",
+                "talker_decode.onnx.data",
                 "code_predictor.onnx",
-                "code_predictor_embed.onnx",
-                "codec_embed.onnx",
-                "text_project.onnx",
+                "code_predictor.onnx.data",
+                "vocoder.onnx",
+                "vocoder.onnx.data",
+                "embeddings/config.json",
+                "embeddings/talker_codec_embedding.npy",
+                "embeddings/text_embedding.npy",
+                "embeddings/text_projection_fc1_weight.npy",
+                "embeddings/text_projection_fc1_bias.npy",
+                "embeddings/text_projection_fc2_weight.npy",
+                "embeddings/text_projection_fc2_bias.npy",
+                "embeddings/codec_head_weight.npy",
+                "embeddings/speaker_ids.json",
+                "embeddings/cp_projection_weight.npy",
+                "embeddings/cp_projection_bias.npy",
+                "tokenizer/vocab.json",
+                "tokenizer/merges.txt",
                 "speaker_encoder.onnx",
-                "tokenizer12hz_decode.onnx",
-                "config.json",
-                "vocab.json",
-                "merges.txt",
             };
             var list = new List<ModelConfig>();
             foreach (var rel in files)
                 list.Add(new ModelConfig(rel, dir, "none"));
+            for (int i = 0; i < 15; i++)
+                list.Add(new ModelConfig($"embeddings/cp_codec_embedding_{i}.npy", dir, "none"));
             return list;
         }
 

@@ -42,12 +42,19 @@ internal sealed class LanguageModel : IDisposable
     private readonly int _cpHeadDim;        // code_predictor head_dim
 
     public LanguageModel(EmbeddingStore embeddings, ExecutionProvider executionProvider = ExecutionProvider.CPU)
+        : this(embeddings, SparkTTSModelPaths.QwenCustomVoiceFolder, executionProvider)
     {
+    }
+
+    public LanguageModel(EmbeddingStore embeddings, string onnxFolder,
+        ExecutionProvider executionProvider = ExecutionProvider.CPU)
+    {
+        if (string.IsNullOrEmpty(onnxFolder))
+            throw new ArgumentException("ONNX folder is required.", nameof(onnxFolder));
         _embeddings = embeddings;
-        string folder = SparkTTSModelPaths.QwenCustomVoiceFolder;
-        _prefill = new QwenOnnxModel(SparkTTSModelPaths.QwenTalkerPrefill, folder, executionProvider);
-        _decode = new QwenOnnxModel(SparkTTSModelPaths.QwenTalkerDecode, folder, executionProvider);
-        _codePredictor = new QwenOnnxModel(SparkTTSModelPaths.QwenCodePredictor, folder, executionProvider);
+        _prefill = new QwenOnnxModel(SparkTTSModelPaths.QwenTalkerPrefill, onnxFolder, executionProvider);
+        _decode = new QwenOnnxModel(SparkTTSModelPaths.QwenTalkerDecode, onnxFolder, executionProvider);
+        _codePredictor = new QwenOnnxModel(SparkTTSModelPaths.QwenCodePredictor, onnxFolder, executionProvider);
 
         // Read dimensions from config.json (loaded by EmbeddingStore)
         var cfg = embeddings.Config;

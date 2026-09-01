@@ -60,20 +60,17 @@ namespace SparkTTS.Qwen
             }
         }
 
-        public static IReadOnlyList<string> ExpectedBaseFiles => new[]
+        public static IReadOnlyList<string> ExpectedBaseFiles
         {
-            "talker_prefill.onnx",
-            "talker_decode.onnx",
-            "code_predictor.onnx",
-            "code_predictor_embed.onnx",
-            "codec_embed.onnx",
-            "text_project.onnx",
-            "speaker_encoder.onnx",
-            "tokenizer12hz_decode.onnx",
-            "config.json",
-            "vocab.json",
-            "merges.txt",
-        };
+            get
+            {
+                var files = new List<string>(ExpectedCustomVoiceFiles)
+                {
+                    "speaker_encoder.onnx",
+                };
+                return files;
+            }
+        }
 
         /// <summary>CustomVoice checklist (style TTS).</summary>
         public static IReadOnlyList<string> ExpectedFiles => ExpectedCustomVoiceFiles;
@@ -99,33 +96,8 @@ namespace SparkTTS.Qwen
 
         public static List<string> GetMissingFiles() => MissingUnder(Root, ExpectedCustomVoiceFiles, checkVocabAtRoot: false);
 
-        public static List<string> GetMissingBaseFiles()
-        {
-            var missing = new List<string>();
-            string root = BaseRoot;
-            foreach (var rel in new[]
-            {
-                "talker_prefill.onnx",
-                "talker_decode.onnx",
-                "code_predictor.onnx",
-                "code_predictor_embed.onnx",
-                "codec_embed.onnx",
-                "text_project.onnx",
-                "speaker_encoder.onnx",
-                "tokenizer12hz_decode.onnx",
-                "config.json",
-            })
-            {
-                if (!File.Exists(Path.Combine(root, rel)))
-                    missing.Add(rel);
-            }
-
-            if (!File.Exists(Path.Combine(BaseTokenizerDir, "vocab.json")))
-                missing.Add("vocab.json");
-            if (!File.Exists(Path.Combine(BaseTokenizerDir, "merges.txt")))
-                missing.Add("merges.txt");
-            return missing;
-        }
+        public static List<string> GetMissingBaseFiles() =>
+            MissingUnder(BaseRoot, ExpectedBaseFiles, checkVocabAtRoot: false);
 
         private static List<string> MissingUnder(string root, IReadOnlyList<string> files, bool checkVocabAtRoot)
         {

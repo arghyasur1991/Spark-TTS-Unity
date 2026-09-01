@@ -8,8 +8,8 @@ using SparkTTS.Models;
 namespace SparkTTS.Qwen.Models
 {
     /// <summary>
-    /// 12 Hz codec vocoder. CustomVoice uses vocoder.onnx with codes (1, 16, T);
-    /// Base uses tokenizer12hz_decode.onnx with codes (1, T, 16).
+    /// 12 Hz codec vocoder. Style and Base both use vocoder.onnx with
+    /// codes (1, 16, T) after our ElBruno export.
     /// </summary>
     internal sealed class QwenVocoderModel : QwenOnnxModel
     {
@@ -31,7 +31,7 @@ namespace SparkTTS.Qwen.Models
 
         public static QwenVocoderModel Base(ExecutionProvider ep) =>
             new QwenVocoderModel(SparkTTS.Core.SparkTTSModelPaths.QwenBaseFolder,
-                SparkTTS.Core.SparkTTSModelPaths.QwenTokenizer12HzDecode, timeMajor: true, ep);
+                SparkTTS.Core.SparkTTSModelPaths.QwenVocoder, timeMajor: false, ep);
 
         public float[] Decode(long[,,] codesQuantizerMajor, CancellationToken cancellationToken = default)
         {

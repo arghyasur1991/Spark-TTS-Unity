@@ -1,11 +1,14 @@
-// One engine for CustomVoice style TTS and Base x-vector clone.
-// ONNX sessions are ORTModel (QwenOnnxModel). Graphs differ, so two generate loops stay.
+// One engine for VoiceDesign style TTS and Base x-vector clone.
+// Both talkers are the ElBruno graph split (LanguageModel). Clone injects
+// the speaker-encoder vector via GenerateWithSpeakerEmbedding.
 
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using SparkTTS.Core;
 using SparkTTS.Models;
 using SparkTTS.Qwen.Models;
 using SparkTTS.Utils;
@@ -27,13 +30,14 @@ namespace SparkTTS.Qwen
         private readonly LanguageModel _languageModel;
         private readonly QwenVocoderModel _styleVocoder;
 
-        private readonly QwenBaseConfig _baseConfig;
         private readonly TextTokenizer _cloneTokenizer;
-        private readonly QwenBaseTalker _talker;
+        private readonly EmbeddingStore _cloneEmbeddings;
+        private readonly LanguageModel _cloneLanguageModel;
+        private readonly QwenVocoderModel _cloneVocoder;
         private readonly QwenSpeakerEncoderModel _speakerEncoder;
 
         public bool HasCustomVoice => _languageModel != null;
-        public bool HasClone => _talker != null;
+        public bool HasClone => _cloneLanguageModel != null;
 
         public QwenTtsEngine(ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
@@ -73,11 +77,17 @@ namespace SparkTTS.Qwen
 
             if (clone)
             {
-                _baseConfig = QwenBaseConfig.Load(QwenModelPaths.BaseConfigPath);
-                _cloneTokenizer = new TextTokenizer(QwenModelPaths.BaseTokenizerDir);
-                _talker = new QwenBaseTalker(_baseConfig, executionProvider);
+                var sw = Stopwatch.StartNew();
+                var embeddingsDir = Path.Combine(QwenModelPaths.BaseRoot, "embeddings");
+                var configPath = Path.Combine(embeddingsDir, "config.json");
+                _cloneTokenizer = new TextTokenizer(Path.Combine(QwenModelPaths.BaseRoot, "tokenizer"));
+                _cloneEmbeddings = new EmbeddingStore(embeddingsDir, configPath);
+                _cloneLanguageModel = new LanguageModel(
+                    _cloneEmbeddings, SparkTTSModelPaths.QwenBaseFolder, executionProvider);
+                _cloneVocoder = QwenVocoderModel.Base(executionProvider);
                 _speakerEncoder = new QwenSpeakerEncoderModel(executionProvider);
-                TTSLogger.Log($"[QwenTtsEngine] Base clone config from {QwenModelPaths.BaseRoot} (hidden={_baseConfig.HiddenSize})");
+                TTSLogger.Log(
+                    $"[QwenTtsEngine] Base clone embeddings from {QwenModelPaths.BaseRoot} in {sw.ElapsedMilliseconds}ms");
             }
         }
 
@@ -138,7 +148,7 @@ namespace SparkTTS.Qwen
         {
             if (_disposed)
                 throw new ObjectDisposedException(nameof(QwenTtsEngine));
-            if (_talker == null)
+            if (_cloneLanguageModel == null)
                 throw new InvalidOperationException("Base clone weights are not installed.");
             if (string.IsNullOrEmpty(text))
                 throw new ArgumentException("Text cannot be empty.", nameof(text));
@@ -152,9 +162,12 @@ namespace SparkTTS.Qwen
                 if (tokenIds.Length < 8)
                     throw new InvalidOperationException("Prompt tokenization produced too few tokens.");
 
-                var (embeds, mask, trailing, ttsPad) = BuildXVectorPrefill(tokenIds, speakerEmbedding, language);
-                var codes = _talker.GenerateCodes(embeds, mask, trailing, ttsPad, 1024, cancellationToken);
-                return _talker.DecodeCodes(codes, cancellationToken);
+                var codes = _cloneLanguageModel.GenerateWithSpeakerEmbedding(
+                    tokenIds, speakerEmbedding, language, cancellationToken: cancellationToken);
+                var pcm = _cloneVocoder.Decode(codes, cancellationToken);
+                TTSLogger.Log(
+                    $"[QwenTtsEngine] Base clone codes T={codes.GetLength(2)} wav={pcm.Length} @24k");
+                return pcm;
             }
         }
 
@@ -187,13 +200,14 @@ namespace SparkTTS.Qwen
         /// </summary>
         public Task PreloadCloneAsync()
         {
-            if (_talker == null)
+            if (_cloneLanguageModel == null)
                 return Task.CompletedTask;
             return BackgroundWork.Run(() =>
             {
                 lock (_gate)
                 {
-                    _talker.PreloadSessions();
+                    _cloneLanguageModel.PreloadSessions();
+                    _cloneVocoder.GetSession();
                     _speakerEncoder.GetSession();
                 }
             });
@@ -239,7 +253,9 @@ namespace SparkTTS.Qwen
             _languageModel?.Dispose();
             _styleVocoder?.Dispose();
             _cloneTokenizer?.Dispose();
-            _talker?.Dispose();
+            _cloneEmbeddings?.Dispose();
+            _cloneLanguageModel?.Dispose();
+            _cloneVocoder?.Dispose();
             _speakerEncoder?.Dispose();
         }
 
@@ -250,7 +266,9 @@ namespace SparkTTS.Qwen
             _languageModel?.CollectOnnxModels(list);
             if (_styleVocoder != null)
                 list.Add(_styleVocoder);
-            _talker?.CollectOnnxModels(list);
+            _cloneLanguageModel?.CollectOnnxModels(list);
+            if (_cloneVocoder != null)
+                list.Add(_cloneVocoder);
             if (_speakerEncoder != null)
                 list.Add(_speakerEncoder);
         }
@@ -270,183 +288,6 @@ namespace SparkTTS.Qwen
                     TTSLogger.Log("[QwenTtsEngine] Adopted " + model.SessionKeepAliveKey);
                 }
             }
-        }
-
-        private (float[,,] embeds, long[,] mask, float[,,] trailing, float[] ttsPad)
-            BuildXVectorPrefill(int[] tokenIds, float[] speakerEmbedding, string language)
-        {
-            int h = _baseConfig.HiddenSize;
-            var ids = ToLong(tokenIds);
-
-            var ttsIds = new long[] { _baseConfig.TtsBosTokenId, _baseConfig.TtsEosTokenId, _baseConfig.TtsPadTokenId };
-            var ttsEmbeds = _talker.TextProject(ttsIds);
-            var ttsBos = Row(ttsEmbeds, 0);
-            var ttsEos = Row(ttsEmbeds, 1);
-            var ttsPad = Row(ttsEmbeds, 2);
-
-            long[] codecPrefill;
-            if (string.IsNullOrEmpty(language) ||
-                string.Equals(language, "auto", StringComparison.OrdinalIgnoreCase))
-            {
-                codecPrefill = new long[]
-                {
-                    _baseConfig.CodecNothinkId,
-                    _baseConfig.CodecThinkBosId,
-                    _baseConfig.CodecThinkEosId
-                };
-            }
-            else
-            {
-                string key = language.ToLowerInvariant();
-                if (!_baseConfig.CodecLanguageId.TryGetValue(key, out int languageId))
-                    throw new ArgumentException($"Unsupported language '{language}'.", nameof(language));
-                codecPrefill = new long[]
-                {
-                    _baseConfig.CodecThinkId,
-                    _baseConfig.CodecThinkBosId,
-                    languageId,
-                    _baseConfig.CodecThinkEosId
-                };
-            }
-
-            var codec0 = Flatten(_talker.CodecEmbed(codecPrefill));
-            var codec1 = Flatten(_talker.CodecEmbed(new long[] { _baseConfig.CodecPadId, _baseConfig.CodecBosId }));
-            var spk = PadOrTrim(speakerEmbedding, h);
-            var codecInput = ConcatRows(codec0, spk, codec1);
-
-            var role = Flatten(_talker.TextProject(Slice(ids, 0, 3)));
-            int codecT = codecInput.Count;
-            int padRepeat = codecT - 2;
-            var padBlock = Repeat(ttsPad, padRepeat);
-            var talkerEmbed = ConcatRows(padBlock);
-            talkerEmbed.Add(ttsBos);
-            AddRows(talkerEmbed, codecInput, codecT - 1);
-
-            var ttsTextFirstProj = Flatten(_talker.TextProject(Slice(ids, 3, 1)));
-            var ttsTextFirst = ttsTextFirstProj[0];
-            AddInPlace(ttsTextFirst, codecInput[codecT - 1]);
-
-            var sequence = new List<float[]>();
-            sequence.AddRange(role);
-            sequence.AddRange(talkerEmbed);
-            sequence.Add(ttsTextFirst);
-
-            float[,,] trailing;
-            int textTailStart = 4;
-            int textTailEnd = ids.Length - 5;
-            if (textTailEnd > textTailStart)
-            {
-                var tail = Flatten(_talker.TextProject(Slice(ids, textTailStart, textTailEnd - textTailStart)));
-                tail.Add(ttsEos);
-                trailing = To3(tail, h);
-            }
-            else
-            {
-                trailing = To3(new List<float[]> { ttsEos }, h);
-            }
-
-            var embeds = To3(sequence, h);
-            int t = sequence.Count;
-            var mask = new long[1, t];
-            for (int i = 0; i < t; i++)
-                mask[0, i] = 1;
-
-            return (embeds, mask, trailing, ttsPad);
-        }
-
-        private static long[] ToLong(int[] ids)
-        {
-            var a = new long[ids.Length];
-            for (int i = 0; i < ids.Length; i++)
-                a[i] = ids[i];
-            return a;
-        }
-
-        private static long[] Slice(long[] ids, int start, int count)
-        {
-            var a = new long[count];
-            Array.Copy(ids, start, a, 0, count);
-            return a;
-        }
-
-        private static float[] Row(float[,,] a, int t)
-        {
-            int h = a.GetLength(2);
-            var row = new float[h];
-            for (int i = 0; i < h; i++)
-                row[i] = a[0, t, i];
-            return row;
-        }
-
-        private static List<float[]> Flatten(float[,,] a)
-        {
-            int t = a.GetLength(1);
-            int h = a.GetLength(2);
-            var rows = new List<float[]>(t);
-            for (int i = 0; i < t; i++)
-            {
-                var row = new float[h];
-                for (int j = 0; j < h; j++)
-                    row[j] = a[0, i, j];
-                rows.Add(row);
-            }
-            return rows;
-        }
-
-        private static List<float[]> Repeat(float[] row, int n)
-        {
-            var list = new List<float[]>(n);
-            for (int i = 0; i < n; i++)
-                list.Add((float[])row.Clone());
-            return list;
-        }
-
-        private static List<float[]> ConcatRows(params object[] parts)
-        {
-            var list = new List<float[]>();
-            foreach (var part in parts)
-            {
-                if (part is float[] vec)
-                    list.Add(vec);
-                else if (part is List<float[]> rows)
-                    list.AddRange(rows);
-            }
-            return list;
-        }
-
-        private static void AddRows(List<float[]> dst, List<float[]> src, int count)
-        {
-            for (int i = 0; i < count; i++)
-                AddInPlace(dst[i], src[i]);
-        }
-
-        private static void AddInPlace(float[] dst, float[] src)
-        {
-            int n = Math.Min(dst.Length, src.Length);
-            for (int i = 0; i < n; i++)
-                dst[i] += src[i];
-        }
-
-        private static float[] PadOrTrim(float[] embedding, int hidden)
-        {
-            if (embedding.Length == hidden)
-                return (float[])embedding.Clone();
-            var v = new float[hidden];
-            int n = Math.Min(hidden, embedding.Length);
-            Array.Copy(embedding, v, n);
-            return v;
-        }
-
-        private static float[,,] To3(List<float[]> rows, int hidden)
-        {
-            var a = new float[1, rows.Count, hidden];
-            for (int t = 0; t < rows.Count; t++)
-            {
-                int n = Math.Min(hidden, rows[t].Length);
-                for (int i = 0; i < n; i++)
-                    a[0, t, i] = rows[t][i];
-            }
-            return a;
         }
     }
 }

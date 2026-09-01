@@ -1,6 +1,6 @@
-// zukky/Qwen3-TTS-ONNX-DLL talker graph: embeddings as ONNX (text_project / codec_embed /
-// code_predictor_embed), prefill without position_ids, tokenizer12hz_decode vocoder.
-// Pipeline matches examples/python_dll_call/run_pipeline.py (x-vector clone). No Windows DLL.
+// Leftover zukky/Qwen3-TTS-ONNX-DLL talker (single-file protobuf). Not used.
+// Live clone path is LanguageModel on the ElBruno Base export. Do not load these
+// graphs — ONNX Runtime cannot parse the ~5 GB files (InvalidProtobuf).
 
 using System;
 using System.Collections.Generic;
