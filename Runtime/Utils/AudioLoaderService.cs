@@ -34,27 +34,42 @@ namespace SparkTTS.Utils
         /// <param name="wavData">WAV file data</param>
         /// <param name="sampleRate">Sample rate of the audio</param>
         /// <returns>AudioClip generated from the WAV data</returns>
+        /// <summary>
+        /// Reads a PCM WAV into an AudioClip, honouring the rate, channel count
+        /// and bit depth declared in its header.
+        /// </summary>
+        /// <param name="wavData">WAV file bytes.</param>
+        /// <param name="sampleRate">Fallback rate, used only if the header cannot be parsed.</param>
         public static AudioClip WAVToAudioClip(byte[] wavData, int sampleRate = 16000)
         {
-            // NOTE: This is a simplified implementation for 16-bit mono WAV files
-            
             try
             {
-                // Skip WAV header (typically 44 bytes)
-                const int headerSize = 44;
-                int samples = (wavData.Length - headerSize) / 2; // 16-bit samples
-                float[] audioData = new float[samples];
-                
-                for (int i = 0; i < samples; i++)
+                if (!TryParseWav(wavData, out float[] audioData, out int rate, out int channels))
                 {
-                    // Convert 16-bit PCM samples to float (-1.0f to 1.0f)
-                    short sample = (short)((wavData[headerSize + i * 2 + 1] << 8) | wavData[headerSize + i * 2]);
-                    audioData[i] = sample / 32768.0f;
+                    // Last resort: assume the canonical 44-byte 16-bit mono header.
+                    Debug.LogWarning("[AudioLoaderService] Unparsable WAV header; assuming 16-bit mono at " +
+                                     sampleRate + " Hz.");
+                    const int headerSize = 44;
+                    int fallbackCount = Math.Max(0, (wavData.Length - headerSize) / 2);
+                    audioData = new float[fallbackCount];
+                    for (int i = 0; i < fallbackCount; i++)
+                    {
+                        short s = (short)((wavData[headerSize + i * 2 + 1] << 8) | wavData[headerSize + i * 2]);
+                        audioData[i] = s / 32768.0f;
+                    }
+                    rate = sampleRate;
+                    channels = 1;
                 }
-                
-                AudioClip audioClip = AudioClip.Create("Generated Audio", samples, 1, sampleRate, false);
+
+                if (audioData.Length == 0)
+                {
+                    Debug.LogError("[AudioLoaderService] WAV contained no samples.");
+                    return null;
+                }
+
+                int frames = audioData.Length / Math.Max(1, channels);
+                AudioClip audioClip = AudioClip.Create("Generated Audio", frames, channels, rate, false);
                 audioClip.SetData(audioData, 0);
-                
                 return audioClip;
             }
             catch (Exception ex)
@@ -62,6 +77,102 @@ namespace SparkTTS.Utils
                 Debug.LogError($"Error converting WAV to AudioClip: {ex.Message}");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Minimal RIFF chunk walk. Handles PCM (format 1) at 8/16/24/32-bit and
+        /// IEEE float (format 3), any channel count. Returns interleaved samples.
+        /// </summary>
+        static bool TryParseWav(byte[] d, out float[] samples, out int sampleRate, out int channels)
+        {
+            samples = Array.Empty<float>();
+            sampleRate = 0;
+            channels = 0;
+
+            if (d == null || d.Length < 44)
+                return false;
+            if (d[0] != 'R' || d[1] != 'I' || d[2] != 'F' || d[3] != 'F')
+                return false;
+            if (d[8] != 'W' || d[9] != 'A' || d[10] != 'V' || d[11] != 'E')
+                return false;
+
+            int format = 0;
+            int bits = 0;
+            int dataOffset = -1;
+            int dataLength = 0;
+
+            int pos = 12;
+            while (pos + 8 <= d.Length)
+            {
+                string id = "" + (char)d[pos] + (char)d[pos + 1] + (char)d[pos + 2] + (char)d[pos + 3];
+                int size = BitConverter.ToInt32(d, pos + 4);
+                int body = pos + 8;
+                if (size < 0 || body + size > d.Length)
+                    size = d.Length - body;
+
+                if (id == "fmt ")
+                {
+                    format = BitConverter.ToInt16(d, body);
+                    channels = BitConverter.ToInt16(d, body + 2);
+                    sampleRate = BitConverter.ToInt32(d, body + 4);
+                    bits = BitConverter.ToInt16(d, body + 14);
+                }
+                else if (id == "data")
+                {
+                    dataOffset = body;
+                    dataLength = size;
+                }
+
+                pos = body + size + (size & 1); // chunks are word-aligned
+            }
+
+            if (dataOffset < 0 || channels <= 0 || sampleRate <= 0 || bits <= 0)
+                return false;
+
+            int bytesPerSample = bits / 8;
+            int count = dataLength / bytesPerSample;
+            var outBuf = new float[count];
+
+            if (format == 3 && bits == 32)
+            {
+                for (int i = 0; i < count; i++)
+                    outBuf[i] = BitConverter.ToSingle(d, dataOffset + i * 4);
+            }
+            else if (format == 1 || format == 0xFFFE)
+            {
+                switch (bits)
+                {
+                    case 8:
+                        for (int i = 0; i < count; i++)
+                            outBuf[i] = (d[dataOffset + i] - 128) / 128f;
+                        break;
+                    case 16:
+                        for (int i = 0; i < count; i++)
+                            outBuf[i] = BitConverter.ToInt16(d, dataOffset + i * 2) / 32768f;
+                        break;
+                    case 24:
+                        for (int i = 0; i < count; i++)
+                        {
+                            int o = dataOffset + i * 3;
+                            int v = (d[o] | (d[o + 1] << 8) | (sbyte)d[o + 2] << 16);
+                            outBuf[i] = v / 8388608f;
+                        }
+                        break;
+                    case 32:
+                        for (int i = 0; i < count; i++)
+                            outBuf[i] = BitConverter.ToInt32(d, dataOffset + i * 4) / 2147483648f;
+                        break;
+                    default:
+                        return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+
+            samples = outBuf;
+            return true;
         }
 
         public static AudioClip CreateSilence(int sampleRate = 16000, float duration = 0.25f)
@@ -180,10 +291,15 @@ namespace SparkTTS.Utils
                         writer.Write(new char[] { 'd', 'a', 't', 'a' });
                         writer.Write(samples.Length * 2); // Subchunk2Size
                         
-                        // Audio data
+                        // Audio data. Round rather than truncate, and clamp:
+                        // a clone reference makes several of these round trips
+                        // before it reaches the 12 Hz tokenizer, and the
+                        // quantizer is sensitive enough that truncation bias
+                        // shifts reference codes.
                         foreach (float sample in samples)
                         {
-                            writer.Write((short)(sample * 32767));
+                            float scaled = Mathf.Clamp(sample, -1f, 1f) * 32767f;
+                            writer.Write((short)Mathf.RoundToInt(scaled));
                         }
                     }
                     

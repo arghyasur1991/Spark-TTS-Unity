@@ -236,7 +236,7 @@ namespace SparkTTS
                         var clip = await AudioLoaderService.LoadAudioClipAsync(audioFilePath);
                         TTSLogger.LogVerbose(
                             "[CharacterVoiceFactory] Reloading cloned voice from " + audioFilePath);
-                        return CreateFromReference(clip, voiceConfig.cloneRefText);
+                        return await CreateFromReferenceAsync(clip, voiceConfig.cloneRefText);
                     }
                 }
 
@@ -259,12 +259,66 @@ namespace SparkTTS
             }
         }
 
+        /// <summary>
+        /// Blocking clone. Loading the Base tables and the two reference
+        /// encoders takes tens of seconds on a cold engine, so call this only
+        /// from a worker thread — <see cref="CreateFromReferenceAsync"/> is the
+        /// one to use from Unity.
+        /// </summary>
         public CharacterVoice CreateFromReference(AudioClip referenceClip, string refText = null)
+        {
+            if (!CanClone(referenceClip))
+                return null;
+
+            try
+            {
+                EnsureEngineAsync().GetAwaiter().GetResult();
+                float[] samples = QwenTtsEngine.ClipToMono24k(referenceClip);
+                var (embedding, codes) = BuildClonePrompt(samples, refText, referenceClip.length);
+                return new CharacterVoice(_engine, referenceClip, embedding, refText, codes);
+            }
+            catch (Exception e)
+            {
+                TTSLogger.LogError($"[CharacterVoiceFactory] Exception cloning from reference: {e.Message}\n{e.StackTrace}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Clone from a reference clip without stalling the caller. Only the
+        /// <c>AudioClip.GetData</c> read runs here; the Base tables, the
+        /// speaker encoder and the 12 Hz tokenizer all load and run on a worker.
+        /// </summary>
+        public async Task<CharacterVoice> CreateFromReferenceAsync(AudioClip referenceClip, string refText = null)
+        {
+            if (!CanClone(referenceClip))
+                return null;
+
+            try
+            {
+                // AudioClip.GetData is a main-thread API, so sample extraction
+                // has to happen before anything moves to the pool.
+                float[] samples = QwenTtsEngine.ClipToMono24k(referenceClip);
+                float length = referenceClip.length;
+
+                await EnsureEngineAsync();
+                var (embedding, codes) = await BackgroundWork.Run(
+                    () => BuildClonePrompt(samples, refText, length));
+                return new CharacterVoice(_engine, referenceClip, embedding, refText, codes);
+            }
+            catch (Exception e)
+            {
+                TTSLogger.LogError($"[CharacterVoiceFactory] Exception cloning from reference: {e.Message}\n{e.StackTrace}");
+                return null;
+            }
+        }
+
+        bool CanClone(AudioClip referenceClip)
         {
             if (!_initialized || _disposed)
             {
                 TTSLogger.LogError("[CharacterVoiceFactory] Factory is not initialized or has been disposed.");
-                return null;
+                return false;
             }
 
             if (!QwenModelPaths.IsBasePresent())
@@ -276,48 +330,75 @@ namespace SparkTTS
                     "Export with tools/qwen3_tts_onnx/export_all.py --model-id " +
                     "Qwen/Qwen3-TTS-12Hz-1.7B-Base (split .onnx + .onnx.data, plus " +
                     "speaker_encoder and tokenizer_encoder).");
-                return null;
+                return false;
             }
 
             if (referenceClip == null)
             {
                 TTSLogger.LogError("[CharacterVoiceFactory] Reference clip is null.");
-                return null;
+                return false;
             }
 
-            try
-            {
-                EnsureEngineAsync().GetAwaiter().GetResult();
-                float[] samples = QwenTtsEngine.ClipToMono24k(referenceClip);
-                float[] embedding = _engine.ExtractSpeakerEmbedding(samples);
-                long[,,] codes = null;
-                if (!string.IsNullOrEmpty(refText))
-                {
-                    if (!_engine.HasIclEncoder)
-                    {
-                        TTSLogger.LogError(
-                            "[CharacterVoiceFactory] ICL clone needs tokenizer_encoder.onnx in the Base folder.");
-                        return null;
-                    }
-                    codes = _engine.EncodeReferenceCodes(samples);
-                    TTSLogger.Log(
-                        $"[CharacterVoiceFactory] ICL clone ref_text chars={refText.Length} " +
-                        $"ref_code T={codes.GetLength(1)}");
-                }
-                else
-                {
-                    TTSLogger.LogWarning(
-                        "[CharacterVoiceFactory] Clone without ref_text — x-vector only. " +
-                        "Official ICL needs the reference transcript.");
-                }
-                return new CharacterVoice(_engine, referenceClip, embedding, refText, codes);
-            }
-            catch (Exception e)
-            {
-                TTSLogger.LogError($"[CharacterVoiceFactory] Exception cloning from reference: {e.Message}\n{e.StackTrace}");
-                return null;
-            }
+            return true;
         }
+
+        /// <summary>
+        /// x-vector plus (for ICL) the 12 Hz reference codes. Worker-thread only.
+        /// </summary>
+        (float[] embedding, long[,,] codes) BuildClonePrompt(float[] samples24k, string refText, float clipLength)
+        {
+            _engine.EnsureClone();
+
+            float[] embedding = _engine.ExtractSpeakerEmbedding(samples24k);
+            long[,,] codes = null;
+
+            if (string.IsNullOrEmpty(refText))
+            {
+                TTSLogger.LogWarning(
+                    "[CharacterVoiceFactory] Clone without ref_text — x-vector only. " +
+                    "Official ICL needs the reference transcript.");
+                return (embedding, null);
+            }
+
+            if (!_engine.HasIclEncoder)
+            {
+                throw new InvalidOperationException(
+                    "ICL clone needs tokenizer_encoder.onnx in the Base folder.");
+            }
+
+            codes = _engine.EncodeReferenceCodes(samples24k);
+
+            // Checksums so the prompt can be diffed against
+            // tools/qwen3_tts_onnx/icl_prompt_ref.py. Both are derived from the
+            // reference audio, so they localise a mismatch to preprocessing
+            // (resample / mel) rather than prompt assembly.
+            long codeSum = 0;
+            for (int t = 0; t < codes.GetLength(1); t++)
+                for (int q = 0; q < codes.GetLength(2); q++)
+                    codeSum += codes[0, t, q];
+            double embSum = 0;
+            for (int i = 0; i < embedding.Length; i++)
+                embSum += embedding[i];
+
+            TTSLogger.Log(
+                $"[CharacterVoiceFactory] ICL clone ref_text chars={refText.Length} " +
+                $"ref_code T={codes.GetLength(1)} codeSum={codeSum} " +
+                $"xvecSum={embSum:F4} ({clipLength:0.00}s reference)");
+            if (clipLength < MinRecommendedReferenceSeconds)
+            {
+                TTSLogger.LogWarning(
+                    $"[CharacterVoiceFactory] Clone reference is only {clipLength:0.00}s. " +
+                    $"ICL conditions on the reference codes, so under " +
+                    $"{MinRecommendedReferenceSeconds:0}s the speaker is weakly determined " +
+                    "and takes vary run to run. Lock a longer line.");
+            }
+            return (embedding, codes);
+        }
+
+        /// <summary>
+        /// Below this the reference carries too few 12 Hz frames to pin a speaker.
+        /// </summary>
+        public const float MinRecommendedReferenceSeconds = 4f;
 
         private Task EnsureEngineAsync()
         {

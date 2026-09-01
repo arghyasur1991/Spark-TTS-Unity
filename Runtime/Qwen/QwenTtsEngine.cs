@@ -232,18 +232,63 @@ namespace SparkTTS.Qwen
                         $"[QwenTtsEngine] Base x-vector clone codes T={codes.GetLength(2)} wav pending @24k");
                 }
 
-                var pcm = _cloneVocoder.Decode(codes, cancellationToken);
-                TTSLogger.Log(
-                    $"[QwenTtsEngine] Base clone wav={pcm.Length} @24k icl={icl}");
+                float[] pcm;
+                if (icl)
+                {
+                    // The generated codes continue the reference, so the codec
+                    // has to decode both together — Qwen's generate_voice_clone
+                    // decodes cat([ref_code, codes]) and then drops the leading
+                    // reference by frame proportion. Decoding the tail alone
+                    // starts the decoder from a cold state and the first word
+                    // comes out as a different voice.
+                    int refFrames = refAudioCodes.GetLength(1);
+                    var joined = PrependReferenceCodes(refAudioCodes, codes);
+                    int totalFrames = joined.GetLength(2);
+                    var full = _cloneVocoder.Decode(joined, cancellationToken);
+                    int cut = (int)((long)refFrames * full.Length / Math.Max(totalFrames, 1));
+                    if (cut >= full.Length)
+                        cut = 0;
+                    pcm = new float[full.Length - cut];
+                    Array.Copy(full, cut, pcm, 0, pcm.Length);
+                    TTSLogger.Log(
+                        $"[QwenTtsEngine] Base clone wav={pcm.Length} @24k icl=True " +
+                        $"(decoded {totalFrames} frames, dropped {cut} ref samples)");
+                }
+                else
+                {
+                    pcm = _cloneVocoder.Decode(codes, cancellationToken);
+                    TTSLogger.Log($"[QwenTtsEngine] Base clone wav={pcm.Length} @24k icl=False");
+                }
                 return pcm;
             }
         }
 
         public Task<float[]> SynthesizeCloneAsync(string text, float[] speakerEmbedding, string language,
+            string refText = null, long[,,] refAudioCodes = null,
             CancellationToken cancellationToken = default)
         {
             return BackgroundWork.Run(
-                () => SynthesizeClone(text, speakerEmbedding, language, null, null, cancellationToken));
+                () => SynthesizeClone(text, speakerEmbedding, language, refText, refAudioCodes, cancellationToken));
+        }
+
+        /// <summary>
+        /// Reference frames (1, T, 16) in front of generated codes (1, 16, T'),
+        /// as one quantizer-major (1, 16, T + T') block for the codec.
+        /// </summary>
+        static long[,,] PrependReferenceCodes(long[,,] refTimeMajor, long[,,] generated)
+        {
+            int quantizers = generated.GetLength(1);
+            int refFrames = refTimeMajor.GetLength(1);
+            int genFrames = generated.GetLength(2);
+            var joined = new long[1, quantizers, refFrames + genFrames];
+            for (int q = 0; q < quantizers; q++)
+            {
+                for (int t = 0; t < refFrames; t++)
+                    joined[0, q, t] = refTimeMajor[0, t, q];
+                for (int t = 0; t < genFrames; t++)
+                    joined[0, q, refFrames + t] = generated[0, q, t];
+            }
+            return joined;
         }
 
         /// <summary>

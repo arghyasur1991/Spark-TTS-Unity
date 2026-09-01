@@ -18,6 +18,11 @@ namespace SparkTTS.Qwen
         private (float logit, int index)[] _heap;
         private float[] _probs;
 
+        /// <param name="logitsLength">
+        /// Valid elements in <paramref name="logits"/>. Pass this when the array
+        /// is a reused buffer that is larger than the tensor it holds — the last
+        /// <c>vocabSize</c> entries are the ones sampled from.
+        /// </param>
         public int Sample(
             float[] logits,
             int vocabSize,
@@ -26,11 +31,13 @@ namespace SparkTTS.Qwen
             float topP,
             List<int> history,
             float repetitionPenalty,
-            int[] suppressTokens)
+            int[] suppressTokens,
+            int logitsLength = -1)
         {
             EnsureWork(vocabSize);
-            int src = Math.Max(0, logits.Length - vocabSize);
-            int n = Math.Min(vocabSize, logits.Length - src);
+            int valid = logitsLength >= 0 ? Math.Min(logitsLength, logits.Length) : logits.Length;
+            int src = Math.Max(0, valid - vocabSize);
+            int n = Math.Min(vocabSize, valid - src);
             Array.Copy(logits, src, _work, 0, n);
             if (n < vocabSize)
                 Array.Clear(_work, n, vocabSize - n);

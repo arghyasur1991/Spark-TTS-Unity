@@ -1,5 +1,10 @@
 // Ported from ElBruno.QwenTTS VoiceCloning (MIT).
 // Mel for the Qwen3-TTS Base speaker encoder: 24 kHz, 128 bins, hop 256.
+//
+// Filterbank is librosa.filters.mel defaults — Slaney mel scale, Slaney
+// normalisation — because qwen_tts `mel_spectrogram` calls `librosa_mel_fn`
+// without `htk=True`. An HTK filterbank here produces a plausible-looking
+// mel and a wrong x-vector, so the clone drifts off the reference speaker.
 
 using System;
 
@@ -129,47 +134,70 @@ namespace SparkTTS.Qwen.Audio
             return idx;
         }
 
+        /// <summary>
+        /// <c>librosa.filters.mel(sr, n_fft, n_mels, fmin, fmax)</c> with its defaults
+        /// (<c>htk=False</c>, <c>norm="slaney"</c>), which is what qwen_tts uses.
+        /// </summary>
         private static float[,] BuildMelFilterBank(int nMels, int nFreqs, int sampleRate, float fMin, float fMax)
         {
             var filters = new float[nMels, nFreqs];
+
+            // librosa.fft_frequencies: linspace(0, sr/2, 1 + n_fft/2)
+            var fftFreqs = new double[nFreqs];
+            double fftFreqStep = (double)sampleRate / (2.0 * (nFreqs - 1));
+            for (int k = 0; k < nFreqs; k++)
+                fftFreqs[k] = k * fftFreqStep;
+
+            // librosa.mel_frequencies: evenly spaced in the Slaney mel scale
             double melMin = HzToMel(fMin);
             double melMax = HzToMel(fMax);
-
-            var melPoints = new double[nMels + 2];
-            for (int i = 0; i < nMels + 2; i++)
-                melPoints[i] = melMin + (melMax - melMin) * i / (nMels + 1);
-
             var hzPoints = new double[nMels + 2];
-            var binIndices = new double[nMels + 2];
-            double fftFreqStep = (double)sampleRate / (2.0 * (nFreqs - 1));
             for (int i = 0; i < nMels + 2; i++)
-            {
-                hzPoints[i] = MelToHz(melPoints[i]);
-                binIndices[i] = hzPoints[i] / fftFreqStep;
-            }
+                hzPoints[i] = MelToHz(melMin + (melMax - melMin) * i / (nMels + 1));
 
             for (int m = 0; m < nMels; m++)
             {
-                double left = binIndices[m];
-                double center = binIndices[m + 1];
-                double right = binIndices[m + 2];
-                double enorm = 2.0 / (hzPoints[m + 2] - hzPoints[m]);
+                double lowerHz = hzPoints[m];
+                double centerHz = hzPoints[m + 1];
+                double upperHz = hzPoints[m + 2];
+                double lowerSpan = centerHz - lowerHz;
+                double upperSpan = upperHz - centerHz;
+                // Slaney norm: unit area per filter rather than unit peak.
+                double enorm = 2.0 / (upperHz - lowerHz);
 
                 for (int k = 0; k < nFreqs; k++)
                 {
-                    if (k >= left && k <= center && center > left)
-                        filters[m, k] = (float)(enorm * (k - left) / (center - left));
-                    else if (k > center && k <= right && right > center)
-                        filters[m, k] = (float)(enorm * (right - k) / (right - center));
+                    double f = fftFreqs[k];
+                    double rise = lowerSpan > 0 ? (f - lowerHz) / lowerSpan : 0.0;
+                    double fall = upperSpan > 0 ? (upperHz - f) / upperSpan : 0.0;
+                    double w = Math.Min(rise, fall);
+                    if (w > 0)
+                        filters[m, k] = (float)(enorm * w);
                 }
             }
 
             return filters;
         }
 
-        private static double HzToMel(double hz) => 2595.0 * Math.Log10(1.0 + hz / 700.0);
+        // Slaney mel: linear at 200/3 Hz per mel below 1 kHz, log above.
+        private const double SlaneyFSp = 200.0 / 3.0;
+        private const double SlaneyMinLogHz = 1000.0;
+        private static readonly double SlaneyMinLogMel = SlaneyMinLogHz / SlaneyFSp;
+        private static readonly double SlaneyLogStep = Math.Log(6.4) / 27.0;
 
-        private static double MelToHz(double mel) => 700.0 * (Math.Pow(10.0, mel / 2595.0) - 1.0);
+        private static double HzToMel(double hz)
+        {
+            if (hz >= SlaneyMinLogHz)
+                return SlaneyMinLogMel + Math.Log(hz / SlaneyMinLogHz) / SlaneyLogStep;
+            return hz / SlaneyFSp;
+        }
+
+        private static double MelToHz(double mel)
+        {
+            if (mel >= SlaneyMinLogMel)
+                return SlaneyMinLogHz * Math.Exp(SlaneyLogStep * (mel - SlaneyMinLogMel));
+            return mel * SlaneyFSp;
+        }
 
         private static void Fft(double[] real, double[] imag, int n)
         {

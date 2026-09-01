@@ -32,6 +32,11 @@ namespace SparkTTS.Qwen.Models
         NativeFloatBuffer _cpProjectionBias;
         NativeFloatBuffer[] _projectedCpCodecEmbeddings;
         NativeFloatBuffer _projectedTalkerCodecEmbedding;
+        // Projected rows are filled on first use. Eagerly projecting every row
+        // of all 16 codec tables is ~71 GFLOP (13+ seconds) to serve the ~16
+        // rows a frame actually reads.
+        bool[] _projectedTalkerReady;
+        bool[][] _projectedCpReady;
 
         readonly int _textHiddenSize;
         readonly int _fc1OutSize;
@@ -99,7 +104,7 @@ namespace SparkTTS.Qwen.Models
                 if (_cpProjectionWeight.Cols != _hiddenSize)
                     throw new InvalidDataException(
                         $"CP projection input mismatch: weight columns ({_cpProjectionWeight.Cols}) != hidden_size ({_hiddenSize})");
-                PrecomputeProjected();
+                AllocateProjected();
             }
         }
 
@@ -132,9 +137,17 @@ namespace SparkTTS.Qwen.Models
                 _cpProjectionWeight = Wrap(slots[21]);
                 _cpProjectionBias = Wrap(slots[22]);
                 _projectedCpCodecEmbeddings = new NativeFloatBuffer[CpGroupCount];
+                _projectedCpReady = new bool[CpGroupCount][];
                 for (int i = 0; i < CpGroupCount; i++)
+                {
                     _projectedCpCodecEmbeddings[i] = Wrap(slots[23 + i]);
+                    _projectedCpReady[i] = new bool[_projectedCpCodecEmbeddings[i].Rows];
+                }
                 _projectedTalkerCodecEmbedding = Wrap(slots[38]);
+                // The stashed rows survived the reload but the "already
+                // projected" marks did not, so they are re-derived on demand.
+                // Same numbers, one extra row projection each.
+                _projectedTalkerReady = new bool[_projectedTalkerCodecEmbedding.Rows];
             }
 
             _ownsNative = true;
@@ -201,46 +214,26 @@ namespace SparkTTS.Qwen.Models
                 ?? new Dictionary<string, int>();
         }
 
-        void PrecomputeProjected()
+        /// <summary>
+        /// Reserves the projected codec tables. Rows are projected the first
+        /// time a token asks for one — see <see cref="_projectedTalkerReady"/>.
+        /// </summary>
+        void AllocateProjected()
         {
             int projOutDim = _cpProjectionWeight.Rows;
-            int wRows = _cpProjectionWeight.Rows;
-            int wCols = _cpProjectionWeight.Cols;
-            int cpHidden = _cpHiddenSize;
-            int hidden = _hiddenSize;
-            var wH = _cpProjectionWeight.Ptr;
-            var bH = _cpProjectionBias.Ptr;
 
             _projectedCpCodecEmbeddings = new NativeFloatBuffer[CpGroupCount];
-            var cpSrc = new IntPtr[CpGroupCount];
-            var cpDstPtr = new IntPtr[CpGroupCount];
-            var cpVocab = new int[CpGroupCount];
+            _projectedCpReady = new bool[CpGroupCount][];
             for (int g = 0; g < CpGroupCount; g++)
             {
-                cpVocab[g] = _cpCodecEmbeddings[g].Rows;
-                var dst = NativeFloatBuffer.Alloc(cpVocab[g], projOutDim);
-                _projectedCpCodecEmbeddings[g] = dst;
-                cpSrc[g] = _cpCodecEmbeddings[g].Ptr;
-                cpDstPtr[g] = dst.Ptr;
+                int vocab = _cpCodecEmbeddings[g].Rows;
+                _projectedCpCodecEmbeddings[g] = NativeFloatBuffer.Alloc(vocab, projOutDim);
+                _projectedCpReady[g] = new bool[vocab];
             }
-
-            Parallel.For(0, CpGroupCount, g =>
-            {
-                int vocab = cpVocab[g];
-                var srcH = cpSrc[g];
-                var dstH = cpDstPtr[g];
-                for (int t = 0; t < vocab; t++)
-                    ProjectRow(wH, bH, srcH, dstH, t, cpHidden, projOutDim, wRows, wCols);
-            });
 
             int talkerVocab = _talkerCodecEmbedding.Rows;
             _projectedTalkerCodecEmbedding = NativeFloatBuffer.Alloc(talkerVocab, projOutDim);
-            var talkerSrc = _talkerCodecEmbedding.Ptr;
-            var talkerDst = _projectedTalkerCodecEmbedding.Ptr;
-            Parallel.For(0, talkerVocab, t =>
-            {
-                ProjectRow(wH, bH, talkerSrc, talkerDst, t, hidden, projOutDim, wRows, wCols);
-            });
+            _projectedTalkerReady = new bool[talkerVocab];
         }
 
         static unsafe void ProjectRow(
@@ -316,12 +309,24 @@ namespace SparkTTS.Qwen.Models
                 output[i] += At(_cpProjectionBias, i);
         }
 
+        // Callers hold the engine lock, so these fills are serialized.
         public void ProjectedCpCodecEmbedding(int groupIndex, int tokenId, Span<float> output)
         {
             if (_projectedCpCodecEmbeddings == null)
                 throw new InvalidOperationException("Projected CP codec embeddings not available");
             if (groupIndex < 0 || groupIndex >= CpGroupCount)
                 throw new ArgumentException($"groupIndex must be 0-14, got {groupIndex}");
+
+            var ready = _projectedCpReady[groupIndex];
+            if (!ready[tokenId])
+            {
+                ProjectRow(
+                    _cpProjectionWeight.Ptr, _cpProjectionBias.Ptr,
+                    _cpCodecEmbeddings[groupIndex].Ptr, _projectedCpCodecEmbeddings[groupIndex].Ptr,
+                    tokenId, _cpHiddenSize, _cpProjectionWeight.Rows,
+                    _cpProjectionWeight.Rows, _cpProjectionWeight.Cols);
+                ready[tokenId] = true;
+            }
             _projectedCpCodecEmbeddings[groupIndex].CopyRow(tokenId, output);
         }
 
@@ -329,6 +334,16 @@ namespace SparkTTS.Qwen.Models
         {
             if (_projectedTalkerCodecEmbedding == null)
                 throw new InvalidOperationException("Projected talker codec embedding not available");
+
+            if (!_projectedTalkerReady[tokenId])
+            {
+                ProjectRow(
+                    _cpProjectionWeight.Ptr, _cpProjectionBias.Ptr,
+                    _talkerCodecEmbedding.Ptr, _projectedTalkerCodecEmbedding.Ptr,
+                    tokenId, _hiddenSize, _cpProjectionWeight.Rows,
+                    _cpProjectionWeight.Rows, _cpProjectionWeight.Cols);
+                _projectedTalkerReady[tokenId] = true;
+            }
             _projectedTalkerCodecEmbedding.CopyRow(tokenId, output);
         }
 
