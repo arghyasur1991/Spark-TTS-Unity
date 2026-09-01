@@ -22,20 +22,21 @@ namespace SparkTTS.Qwen
     {
         public const int NativeSampleRate = 24000;
 
+        private readonly ExecutionProvider _ep;
         private readonly object _gate = new();
         private bool _disposed;
 
-        private readonly TextTokenizer _styleTokenizer;
-        private readonly EmbeddingStore _embeddings;
-        private readonly LanguageModel _languageModel;
-        private readonly QwenVocoderModel _styleVocoder;
+        private TextTokenizer _styleTokenizer;
+        private EmbeddingStore _embeddings;
+        private LanguageModel _languageModel;
+        private QwenVocoderModel _styleVocoder;
 
-        private readonly TextTokenizer _cloneTokenizer;
-        private readonly EmbeddingStore _cloneEmbeddings;
-        private readonly LanguageModel _cloneLanguageModel;
-        private readonly QwenVocoderModel _cloneVocoder;
-        private readonly QwenSpeakerEncoderModel _speakerEncoder;
-        private readonly QwenTokenizerEncoderModel _tokenizerEncoder;
+        private TextTokenizer _cloneTokenizer;
+        private EmbeddingStore _cloneEmbeddings;
+        private LanguageModel _cloneLanguageModel;
+        private QwenVocoderModel _cloneVocoder;
+        private QwenSpeakerEncoderModel _speakerEncoder;
+        private QwenTokenizerEncoderModel _tokenizerEncoder;
 
         public bool HasCustomVoice => _languageModel != null;
         public bool HasClone => _cloneLanguageModel != null;
@@ -43,55 +44,87 @@ namespace SparkTTS.Qwen
 
         public QwenTtsEngine(ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
-            bool style = QwenModelPaths.IsCustomVoicePresent();
-            bool clone = QwenModelPaths.IsBasePresent();
-            if (!style && !clone)
+            _ep = executionProvider;
+            if (!QwenModelPaths.IsCustomVoicePresent() && !QwenModelPaths.IsBasePresent())
             {
                 throw new InvalidOperationException(
                     "Qwen3-TTS files missing. Style: " + QwenModelPaths.Root +
                     "; clone: " + QwenModelPaths.BaseRoot);
             }
+        }
 
-            if (style)
-            {
-                var sw = Stopwatch.StartNew();
-                var embeddingsDir = System.IO.Path.Combine(QwenModelPaths.Root, "embeddings");
-                var configPath = System.IO.Path.Combine(embeddingsDir, "config.json");
-                _styleTokenizer = new TextTokenizer(System.IO.Path.Combine(QwenModelPaths.Root, "tokenizer"));
+        /// <summary>
+        /// VoiceDesign npy + talker wrappers. Not Base clone. Call from VoiceDesign generate.
+        /// </summary>
+        internal void EnsureStyle()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(QwenTtsEngine));
+            lock (_gate)
+                EnsureStyleUnlocked();
+        }
+
+        void EnsureStyleUnlocked()
+        {
+            if (_languageModel != null)
+                return;
+            if (!QwenModelPaths.IsCustomVoicePresent())
+                throw new InvalidOperationException("VoiceDesign weights are not installed.");
+
+            var sw = Stopwatch.StartNew();
+            var embeddingsDir = Path.Combine(QwenModelPaths.Root, "embeddings");
+            var configPath = Path.Combine(embeddingsDir, "config.json");
+            _styleTokenizer = new TextTokenizer(Path.Combine(QwenModelPaths.Root, "tokenizer"));
 #if UNITY_EDITOR
-                var pendingEmb = NativeSessionKeepAlive.TakePendingEmbeddings();
-                if (pendingEmb != null)
-                {
-                    _embeddings = EmbeddingStore.FromKeepAliveSlots(embeddingsDir, configPath, pendingEmb);
-                    TTSLogger.Log(
-                        $"[QwenTtsEngine] Wrapped native embeddings after domain reload in {sw.ElapsedMilliseconds}ms");
-                }
-                else
-#endif
-                {
-                    _embeddings = new EmbeddingStore(embeddingsDir, configPath);
-                    TTSLogger.Log(
-                        $"[QwenTtsEngine] CustomVoice embeddings from {QwenModelPaths.Root} in {sw.ElapsedMilliseconds}ms");
-                }
-                _languageModel = new LanguageModel(_embeddings, executionProvider);
-                _styleVocoder = QwenVocoderModel.CustomVoice(executionProvider);
-            }
-
-            if (clone)
+            var pendingEmb = NativeSessionKeepAlive.TakePendingEmbeddings();
+            if (pendingEmb != null)
             {
-                var sw = Stopwatch.StartNew();
-                var embeddingsDir = Path.Combine(QwenModelPaths.BaseRoot, "embeddings");
-                var configPath = Path.Combine(embeddingsDir, "config.json");
-                _cloneTokenizer = new TextTokenizer(Path.Combine(QwenModelPaths.BaseRoot, "tokenizer"));
-                _cloneEmbeddings = new EmbeddingStore(embeddingsDir, configPath);
-                _cloneLanguageModel = new LanguageModel(
-                    _cloneEmbeddings, SparkTTSModelPaths.QwenBaseFolder, executionProvider);
-                _cloneVocoder = QwenVocoderModel.Base(executionProvider);
-                _speakerEncoder = new QwenSpeakerEncoderModel(executionProvider);
-                _tokenizerEncoder = new QwenTokenizerEncoderModel(executionProvider);
+                _embeddings = EmbeddingStore.FromKeepAliveSlots(embeddingsDir, configPath, pendingEmb);
                 TTSLogger.Log(
-                    $"[QwenTtsEngine] Base clone embeddings from {QwenModelPaths.BaseRoot} in {sw.ElapsedMilliseconds}ms");
+                    $"[QwenTtsEngine] Wrapped VoiceDesign embeddings after domain reload in {sw.ElapsedMilliseconds}ms");
             }
+            else
+#endif
+            {
+                _embeddings = new EmbeddingStore(embeddingsDir, configPath);
+                TTSLogger.Log(
+                    $"[QwenTtsEngine] VoiceDesign embeddings from {QwenModelPaths.Root} in {sw.ElapsedMilliseconds}ms");
+            }
+            _languageModel = new LanguageModel(_embeddings, _ep);
+            _styleVocoder = QwenVocoderModel.CustomVoice(_ep);
+        }
+
+        /// <summary>
+        /// Base clone npy + talker + speaker encoder + 12 Hz tokenizer encoder.
+        /// Not VoiceDesign. Call from CreateFromReference / clone generate.
+        /// </summary>
+        internal void EnsureClone()
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(QwenTtsEngine));
+            lock (_gate)
+                EnsureCloneUnlocked();
+        }
+
+        void EnsureCloneUnlocked()
+        {
+            if (_cloneLanguageModel != null)
+                return;
+            if (!QwenModelPaths.IsBasePresent())
+                throw new InvalidOperationException("Base clone weights are not installed.");
+
+            var sw = Stopwatch.StartNew();
+            var embeddingsDir = Path.Combine(QwenModelPaths.BaseRoot, "embeddings");
+            var configPath = Path.Combine(embeddingsDir, "config.json");
+            _cloneTokenizer = new TextTokenizer(Path.Combine(QwenModelPaths.BaseRoot, "tokenizer"));
+            _cloneEmbeddings = new EmbeddingStore(embeddingsDir, configPath);
+            _cloneLanguageModel = new LanguageModel(
+                _cloneEmbeddings, SparkTTSModelPaths.QwenBaseFolder, _ep);
+            _cloneVocoder = QwenVocoderModel.Base(_ep);
+            _speakerEncoder = new QwenSpeakerEncoderModel(_ep);
+            _tokenizerEncoder = new QwenTokenizerEncoderModel(_ep);
+            TTSLogger.Log(
+                $"[QwenTtsEngine] Base clone embeddings from {QwenModelPaths.BaseRoot} in {sw.ElapsedMilliseconds}ms");
         }
 
         public float[] Synthesize(string text, string speaker, string language, string instruct,
@@ -99,8 +132,6 @@ namespace SparkTTS.Qwen
         {
             if (_disposed)
                 throw new ObjectDisposedException(nameof(QwenTtsEngine));
-            if (_languageModel == null)
-                throw new InvalidOperationException("VoiceDesign weights are not installed.");
             if (string.IsNullOrEmpty(text))
                 throw new ArgumentException("Text cannot be empty.", nameof(text));
             if (text.Length > 10000)
@@ -108,6 +139,7 @@ namespace SparkTTS.Qwen
 
             lock (_gate)
             {
+                EnsureStyleUnlocked();
                 cancellationToken.ThrowIfCancellationRequested();
                 _ = speaker;
                 var assistantIds = _styleTokenizer.BuildAssistantPrompt(text);
@@ -133,11 +165,10 @@ namespace SparkTTS.Qwen
         {
             if (_disposed)
                 throw new ObjectDisposedException(nameof(QwenTtsEngine));
-            if (_speakerEncoder == null)
-                throw new InvalidOperationException("Base clone weights are not installed.");
 
             lock (_gate)
             {
+                EnsureCloneUnlocked();
                 var embedding = _speakerEncoder.Encode(samples24k);
                 if (embedding.Length == 0)
                     throw new InvalidOperationException("speaker_encoder.onnx returned an empty embedding.");
@@ -150,11 +181,12 @@ namespace SparkTTS.Qwen
         {
             if (_disposed)
                 throw new ObjectDisposedException(nameof(QwenTtsEngine));
-            if (_tokenizerEncoder == null)
-                throw new InvalidOperationException("Base ICL tokenizer encoder is not installed.");
 
             lock (_gate)
             {
+                EnsureCloneUnlocked();
+                if (_tokenizerEncoder == null)
+                    throw new InvalidOperationException("Base ICL tokenizer encoder is not installed.");
                 var codes = _tokenizerEncoder.Encode(samples24k);
                 TTSLogger.LogVerbose(
                     $"[QwenTtsEngine] ICL ref_code T={codes.GetLength(1)} Q={codes.GetLength(2)}");
@@ -168,8 +200,6 @@ namespace SparkTTS.Qwen
         {
             if (_disposed)
                 throw new ObjectDisposedException(nameof(QwenTtsEngine));
-            if (_cloneLanguageModel == null)
-                throw new InvalidOperationException("Base clone weights are not installed.");
             if (string.IsNullOrEmpty(text))
                 throw new ArgumentException("Text cannot be empty.", nameof(text));
             if (speakerEmbedding == null || speakerEmbedding.Length == 0)
@@ -177,6 +207,7 @@ namespace SparkTTS.Qwen
 
             lock (_gate)
             {
+                EnsureCloneUnlocked();
                 cancellationToken.ThrowIfCancellationRequested();
                 var tokenIds = _cloneTokenizer.BuildCustomVoicePrompt(text, speaker: null, language, instruct: null);
                 if (tokenIds.Length < 8)
@@ -220,12 +251,11 @@ namespace SparkTTS.Qwen
         /// </summary>
         public Task PreloadStyleAsync()
         {
-            if (_languageModel == null)
-                return Task.CompletedTask;
             return BackgroundWork.Run(() =>
             {
                 lock (_gate)
                 {
+                    EnsureStyleUnlocked();
                     _languageModel.PreloadSessions();
                     _styleVocoder.GetSession();
                 }
@@ -237,12 +267,11 @@ namespace SparkTTS.Qwen
         /// </summary>
         public Task PreloadCloneAsync()
         {
-            if (_cloneLanguageModel == null)
-                return Task.CompletedTask;
             return BackgroundWork.Run(() =>
             {
                 lock (_gate)
                 {
+                    EnsureCloneUnlocked();
                     _cloneLanguageModel.PreloadSessions();
                     _cloneVocoder.GetSession();
                     _speakerEncoder.GetSession();

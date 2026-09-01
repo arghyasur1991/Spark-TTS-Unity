@@ -102,7 +102,7 @@ namespace SparkTTS
             {
                 TTSLogger.LogWarning(
                     "[CharacterVoiceFactory] Base 1.7B missing — CreateFromReference unavailable. " +
-                    "Place zukky onnx_kv + tokenizer at " + QwenModelPaths.BaseRoot);
+                    "Place exported Base ONNX at " + QwenModelPaths.BaseRoot);
             }
         }
 
@@ -134,8 +134,8 @@ namespace SparkTTS
         }
 
         /// <summary>
-        /// Waits for models to be ready. Constructs the engine (tokenizer / embeddings).
-        /// Large ONNX sessions stay deferred until the first generate or clone extract.
+        /// Waits for the factory engine object. VoiceDesign / Base npy load on first generate or clone.
+        /// Large ONNX sessions stay deferred until that first use as well.
         /// </summary>
         public static async Task WaitForModelsLoadedAsync()
         {
@@ -341,8 +341,7 @@ namespace SparkTTS
 #endif
                 _engine = new QwenTtsEngine(ep);
                 TTSLogger.LogVerbose(
-                    $"[CharacterVoiceFactory] Qwen engine ready (EP {ep}, " +
-                    $"style={_engine.HasCustomVoice}, clone={_engine.HasClone})");
+                    $"[CharacterVoiceFactory] Qwen engine constructed (EP {ep}; VoiceDesign/Base npy on first use)");
             });
             return _engineTask;
         }
@@ -360,6 +359,23 @@ namespace SparkTTS
             var pending = hasSessions ? NativeSessionKeepAlive.TakePending() : null;
             Instance._disposed = false;
             Instance._engine = new QwenTtsEngine(ep);
+
+            bool needStyle = hasEmb;
+            bool needClone = false;
+            if (pending != null)
+            {
+                foreach (var key in pending.Keys)
+                {
+                    if (PendingKeyIsClone(key))
+                        needClone = true;
+                    else if (PendingKeyIsStyle(key))
+                        needStyle = true;
+                }
+            }
+            if (needStyle)
+                Instance._engine.EnsureStyle();
+            if (needClone)
+                Instance._engine.EnsureClone();
 
             int offered = pending?.Count ?? 0;
             int leftover = 0;
@@ -380,6 +396,18 @@ namespace SparkTTS
                     $"[CharacterVoiceFactory] Adopted {offered - leftover}/{offered} ONNX sessions after domain reload");
             }
             return true;
+        }
+
+        static bool PendingKeyIsClone(string key)
+        {
+            return key.IndexOf(SparkTTS.Core.SparkTTSModelPaths.QwenBaseFolder, StringComparison.Ordinal) >= 0;
+        }
+
+        static bool PendingKeyIsStyle(string key)
+        {
+            if (PendingKeyIsClone(key))
+                return false;
+            return key.IndexOf(SparkTTS.Core.SparkTTSModelPaths.QwenCustomVoiceFolder, StringComparison.Ordinal) >= 0;
         }
 #endif
 
