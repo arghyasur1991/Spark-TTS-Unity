@@ -1,11 +1,12 @@
-using System.Collections.Generic;
 using System.Text;
 
 namespace SparkTTS.Qwen
 {
     /// <summary>
     /// Maps Spark CharacterVoice style knobs onto Qwen3-TTS VoiceDesign.
-    /// The voice is a natural-language instruct string, not a preset speaker id.
+    /// Gender / pitch / speed always become the identity prefix. Extra
+    /// is optional notes (age, timbre, mic, use-case) — not a replacement
+    /// for the knobs.
     /// </summary>
     public static class QwenStyleMap
     {
@@ -27,80 +28,84 @@ namespace SparkTTS.Qwen
         }
 
         /// <summary>
-        /// VoiceDesign instruct. An explicit description wins; otherwise gender/pitch/speed
-        /// are folded into one sentence so Call Studio knobs still do something.
+        /// VoiceDesign instruct. Dropdowns always contribute; extra is appended.
+        /// Host UIs that preview this string must use the same phrases.
         /// </summary>
-        public static string VoiceDesignInstruct(string gender, string pitch, string speed, string instruct = null)
+        public static string VoiceDesignInstruct(string gender, string pitch, string speed, string extra = null)
         {
-            if (!string.IsNullOrWhiteSpace(instruct))
-                return instruct.Trim();
-
-            var parts = new List<string>();
-            if (!string.IsNullOrEmpty(gender))
-            {
-                switch (gender.Trim().ToLowerInvariant())
-                {
-                    case "female":
-                    case "woman":
-                    case "f":
-                        parts.Add("a female speaker");
-                        break;
-                    default:
-                        parts.Add("a male speaker");
-                        break;
-                }
-            }
-            AppendPitch(parts, pitch);
-            AppendSpeed(parts, speed);
-            if (parts.Count == 0)
-                return "A natural conversational speaking voice.";
             var sb = new StringBuilder();
-            sb.Append("Speak as ");
-            sb.Append(string.Join(", ", parts));
-            sb.Append('.');
+            sb.Append(GenderPhrase(gender));
+            sb.Append(", ");
+            sb.Append(PitchPhrase(pitch));
+            sb.Append(" pitch, ");
+            sb.Append(SpeedPhrase(speed));
+            sb.Append(" speaking rate.");
+            if (!string.IsNullOrWhiteSpace(extra))
+            {
+                sb.Append(' ');
+                sb.Append(extra.Trim());
+            }
             return sb.ToString();
         }
 
         /// <summary>
-        /// Builds an instruct string for 1.7B. Returns null when pitch and speed are moderate/default
-        /// so the prompt stays a single assistant turn.
+        /// Builds an instruct string for 1.7B from pitch/speed only.
         /// </summary>
         public static string InstructFor(string pitch, string speed)
         {
             return VoiceDesignInstruct(null, pitch, speed, null);
         }
 
-        private static void AppendPitch(List<string> parts, string pitch)
+        public static string GenderPhrase(string gender)
         {
-            if (string.IsNullOrEmpty(pitch))
-                return;
-            switch (pitch.Trim().ToLowerInvariant())
+            if (string.IsNullOrEmpty(gender))
+                return "Male";
+            switch (gender.Trim().ToLowerInvariant())
             {
-                case "very_low":
-                case "low":
-                    parts.Add("in a lower pitch");
-                    break;
-                case "high":
-                case "very_high":
-                    parts.Add("in a higher pitch");
-                    break;
+                case "female":
+                case "woman":
+                case "f":
+                    return "Female";
+                default:
+                    return "Male";
             }
         }
 
-        private static void AppendSpeed(List<string> parts, string speed)
+        public static string PitchPhrase(string pitch)
+        {
+            if (string.IsNullOrEmpty(pitch))
+                return "medium";
+            switch (pitch.Trim().ToLowerInvariant())
+            {
+                case "very_low":
+                    return "very low";
+                case "low":
+                    return "low";
+                case "high":
+                    return "high";
+                case "very_high":
+                    return "very high";
+                default:
+                    return "medium";
+            }
+        }
+
+        public static string SpeedPhrase(string speed)
         {
             if (string.IsNullOrEmpty(speed))
-                return;
+                return "medium";
             switch (speed.Trim().ToLowerInvariant())
             {
                 case "very_low":
+                    return "very slow";
                 case "low":
-                    parts.Add("slowly");
-                    break;
+                    return "slow";
                 case "high":
+                    return "fast";
                 case "very_high":
-                    parts.Add("quickly");
-                    break;
+                    return "very fast";
+                default:
+                    return "medium";
             }
         }
     }

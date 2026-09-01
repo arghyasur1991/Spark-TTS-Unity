@@ -96,6 +96,7 @@ namespace SparkTTS
                 pitch = Pitch,
                 speed = Speed,
                 instruct = Instruct,
+                clone = _speakerEmbedding != null,
                 timestamp = DateTime.UtcNow,
                 audioFile = "sample.wav",
                 sampleRate = ReferenceClip != null ? ReferenceClip.frequency : QwenTtsEngine.NativeSampleRate,
@@ -231,6 +232,7 @@ namespace SparkTTS
         public string pitch;
         public string speed;
         public string instruct;
+        public bool clone;
         public string timestamp;
         public string audioFile;
         public int sampleRate;

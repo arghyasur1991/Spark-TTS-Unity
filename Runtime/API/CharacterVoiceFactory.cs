@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading.Tasks;
+using Newtonsoft.Json;
 using UnityEngine;
 using SparkTTS.Qwen.Models;
 using TTSLogger = SparkTTS.Utils.Logger;
@@ -204,17 +206,48 @@ namespace SparkTTS
                 return null;
             }
 
-            if (!QwenModelPaths.IsCustomVoicePresent())
-            {
-                TTSLogger.LogError(
-                    "[CharacterVoiceFactory] CreateFromFolderAsync needs CustomVoice at " +
-                    QwenModelPaths.Root);
-                return null;
-            }
-
             try
             {
                 await EnsureEngineAsync();
+                string configPath = Path.Combine(voiceFolder, "voice_config.json");
+                if (File.Exists(configPath))
+                {
+                    var voiceConfig = JsonConvert.DeserializeObject<VoiceConfig>(
+                        File.ReadAllText(configPath));
+                    if (voiceConfig != null && voiceConfig.clone)
+                    {
+                        if (!QwenModelPaths.IsBasePresent())
+                        {
+                            TTSLogger.LogError(
+                                "[CharacterVoiceFactory] Folder is a cloned voice but Base ONNX is missing at " +
+                                QwenModelPaths.BaseRoot);
+                            return null;
+                        }
+
+                        string audioFilePath = Path.Combine(
+                            voiceFolder, voiceConfig.audioFile ?? "sample.wav");
+                        if (!File.Exists(audioFilePath))
+                        {
+                            TTSLogger.LogError(
+                                "[CharacterVoiceFactory] Clone folder has no sample wav: " + audioFilePath);
+                            return null;
+                        }
+
+                        var clip = await AudioLoaderService.LoadAudioClipAsync(audioFilePath);
+                        TTSLogger.LogVerbose(
+                            "[CharacterVoiceFactory] Reloading cloned voice from " + audioFilePath);
+                        return CreateFromReference(clip);
+                    }
+                }
+
+                if (!QwenModelPaths.IsCustomVoicePresent())
+                {
+                    TTSLogger.LogError(
+                        "[CharacterVoiceFactory] CreateFromFolderAsync needs VoiceDesign at " +
+                        QwenModelPaths.Root);
+                    return null;
+                }
+
                 CharacterVoice voice = new(_engine);
                 await voice.LoadVoiceAsync(voiceFolder);
                 return voice;
