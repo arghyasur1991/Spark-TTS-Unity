@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Style TTS now runs Qwen3-TTS 1.7B CustomVoice ONNX (ElBruno.QwenTTS port). `CharacterVoiceFactory` / `CharacterVoice` signatures are unchanged.
 - `GenerateSpeechAsync` still defaults to 16 kHz; native vocoder output is 24 kHz and is resampled.
-- `CreateFromReference` clones via Qwen3-TTS 1.7B **Base** ONNX (zukky single-file graph, x-vector / `--xvec-only`). CustomVoice still cannot clone.
+- `CreateFromReference` clones via Qwen3-TTS 1.7B **Base** ONNX. With `refText`, this is official ICL (`tokenizer_encoder` + speaker embedding). Without `refText`, x-vector-only. CustomVoice still cannot clone.
 
 ### Added
 - Local 1.7B CustomVoice layout under `StreamingAssets/SparkTTS/Qwen3-1.7B/` (`QwenModelPaths`). No HuggingFace download.

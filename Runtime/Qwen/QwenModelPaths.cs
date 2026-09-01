@@ -67,6 +67,8 @@ namespace SparkTTS.Qwen
                 var files = new List<string>(ExpectedCustomVoiceFiles)
                 {
                     "speaker_encoder.onnx",
+                    "tokenizer_encoder.onnx",
+                    "tokenizer_encoder.onnx.data",
                 };
                 return files;
             }

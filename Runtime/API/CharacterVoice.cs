@@ -25,6 +25,8 @@ namespace SparkTTS
         private AudioClip _lastGeneratedClip;
         private readonly QwenTtsEngine _engine;
         private readonly float[] _speakerEmbedding;
+        private readonly string _cloneRefText;
+        private readonly long[,,] _refAudioCodes;
         private bool _disposed;
         private float[] _referenceWaveform;
 
@@ -48,11 +50,14 @@ namespace SparkTTS
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
         }
 
-        internal CharacterVoice(QwenTtsEngine engine, AudioClip referenceClip, float[] speakerEmbedding)
+        internal CharacterVoice(QwenTtsEngine engine, AudioClip referenceClip, float[] speakerEmbedding,
+            string cloneRefText = null, long[,,] refAudioCodes = null)
         {
             _engine = engine ?? throw new ArgumentNullException(nameof(engine));
             _speakerEmbedding = speakerEmbedding ?? throw new ArgumentNullException(nameof(speakerEmbedding));
             _referenceClip = referenceClip;
+            _cloneRefText = cloneRefText;
+            _refAudioCodes = refAudioCodes;
         }
 
         internal async Task LoadVoiceAsync(string voiceFolder)
@@ -97,6 +102,7 @@ namespace SparkTTS
                 speed = Speed,
                 instruct = Instruct,
                 clone = _speakerEmbedding != null,
+                cloneRefText = _cloneRefText,
                 timestamp = DateTime.UtcNow,
                 audioFile = "sample.wav",
                 sampleRate = ReferenceClip != null ? ReferenceClip.frequency : QwenTtsEngine.NativeSampleRate,
@@ -146,8 +152,11 @@ namespace SparkTTS
                 if (_speakerEmbedding != null)
                 {
                     var embedding = _speakerEmbedding;
+                    var refText = _cloneRefText;
+                    var refCodes = _refAudioCodes;
                     pcm24 = await BackgroundWork.Run(
-                        () => _engine.SynthesizeClone(text, embedding, QwenStyleMap.DefaultLanguage));
+                        () => _engine.SynthesizeClone(
+                            text, embedding, QwenStyleMap.DefaultLanguage, refText, refCodes));
                 }
                 else
                 {
@@ -233,6 +242,7 @@ namespace SparkTTS
         public string speed;
         public string instruct;
         public bool clone;
+        public string cloneRefText;
         public string timestamp;
         public string audioFile;
         public int sampleRate;

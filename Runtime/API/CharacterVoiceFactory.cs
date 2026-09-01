@@ -236,7 +236,7 @@ namespace SparkTTS
                         var clip = await AudioLoaderService.LoadAudioClipAsync(audioFilePath);
                         TTSLogger.LogVerbose(
                             "[CharacterVoiceFactory] Reloading cloned voice from " + audioFilePath);
-                        return CreateFromReference(clip);
+                        return CreateFromReference(clip, voiceConfig.cloneRefText);
                     }
                 }
 
@@ -259,7 +259,7 @@ namespace SparkTTS
             }
         }
 
-        public CharacterVoice CreateFromReference(AudioClip referenceClip)
+        public CharacterVoice CreateFromReference(AudioClip referenceClip, string refText = null)
         {
             if (!_initialized || _disposed)
             {
@@ -273,9 +273,9 @@ namespace SparkTTS
                 TTSLogger.LogError(
                     "[CharacterVoiceFactory] Voice cloning needs Qwen3-TTS 1.7B Base ONNX at " +
                     $"{QwenModelPaths.BaseRoot} (missing {missing.Count} file(s)). " +
-                    "Source: https://huggingface.co/zukky/Qwen3-TTS-ONNX-DLL — copy onnx_kv/*.onnx " +
-                    "and models/Qwen3-TTS-12Hz-1.7B-Base/{config.json,vocab.json,merges.txt}. " +
-                    "Do not use qwen3_tts_rust.dll (Windows-only).");
+                    "Export with tools/qwen3_tts_onnx/export_all.py --model-id " +
+                    "Qwen/Qwen3-TTS-12Hz-1.7B-Base (split .onnx + .onnx.data, plus " +
+                    "speaker_encoder and tokenizer_encoder).");
                 return null;
             }
 
@@ -290,7 +290,27 @@ namespace SparkTTS
                 EnsureEngineAsync().GetAwaiter().GetResult();
                 float[] samples = QwenTtsEngine.ClipToMono24k(referenceClip);
                 float[] embedding = _engine.ExtractSpeakerEmbedding(samples);
-                return new CharacterVoice(_engine, referenceClip, embedding);
+                long[,,] codes = null;
+                if (!string.IsNullOrEmpty(refText))
+                {
+                    if (!_engine.HasIclEncoder)
+                    {
+                        TTSLogger.LogError(
+                            "[CharacterVoiceFactory] ICL clone needs tokenizer_encoder.onnx in the Base folder.");
+                        return null;
+                    }
+                    codes = _engine.EncodeReferenceCodes(samples);
+                    TTSLogger.Log(
+                        $"[CharacterVoiceFactory] ICL clone ref_text chars={refText.Length} " +
+                        $"ref_code T={codes.GetLength(1)}");
+                }
+                else
+                {
+                    TTSLogger.LogWarning(
+                        "[CharacterVoiceFactory] Clone without ref_text — x-vector only. " +
+                        "Official ICL needs the reference transcript.");
+                }
+                return new CharacterVoice(_engine, referenceClip, embedding, refText, codes);
             }
             catch (Exception e)
             {

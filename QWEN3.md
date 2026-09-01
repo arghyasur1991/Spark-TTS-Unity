@@ -5,7 +5,7 @@ The `qwen3-tts` branch keeps the Spark-TTS-Unity **public API** (`CharacterVoice
 | Path | Backend | Weights |
 |---|---|---|
 | `CreateFromStyleAsync` | Qwen3-TTS 12Hz **1.7B CustomVoice** | ElBruno npy + sharded ONNX |
-| `CreateFromReference` | Qwen3-TTS 12Hz **1.7B Base** (x-vector clone) | zukky single-file ONNX |
+| `CreateFromReference` | Qwen3-TTS 12Hz **1.7B Base** (ICL clone when `refText` is set) | ElBruno split ONNX + tokenizer_encoder |
 
 This package **does not download** weights (no HuggingFace client). Place files locally, then copy into StreamingAssets. A later Google Drive zip is fine; the layouts below are the contract.
 
@@ -75,7 +75,7 @@ This package does not download Hub files. A host app copies the layouts above in
 | Spark call | Backend |
 |---|---|
 | `CreateFromStyleAsync(gender, pitch, speed)` | CustomVoice preset speaker (`male` → `ryan`, `female` → `serena`) plus instruct text for non-moderate pitch/speed |
-| `CreateFromReference(AudioClip)` | Base **x-vector** clone: 24 kHz mel → `speaker_encoder` → talker. Needs Base files. |
+| `CreateFromReference(AudioClip, refText)` | Base **ICL** clone: 24 kHz wav → `tokenizer_encoder` (`ref_code`) + `speaker_encoder` (x-vector) + `refText`. Omit `refText` for x-vector-only. Needs Base files including `tokenizer_encoder.onnx`. |
 | `GenerateSpeechAsync(text, sampleRate)` | Talker + vocoder at **24 kHz**, then resample to `sampleRate` (default **16000**) |
 | `CreateFromFolderAsync` | Reloads `voice_config.json` style knobs only (CustomVoice) |
 
@@ -89,14 +89,14 @@ CustomVoice (npy embeddings + `position_ids`) and Base (ONNX embeddings, no `pos
 
 ## Clone notes
 
-Spark’s `CreateFromReference(AudioClip)` has **no reference transcript**. That matches zukky `--xvec-only` (speaker embedding only). Full ICL (`--ref-audio` + `--ref-text` + `tokenizer12hz_encode`) is not on this public API.
+`CreateFromReference(clip, refText)` is official Qwen ICL (`x_vector_only_mode=False`): 12 Hz `ref_code` + `ref_text` + speaker embedding. The tokenizer encoder graph is traced at 20 s (Mimi pad/reshape freeze T; dynamo fails). Pad/crop in C#, keep `samples // 1920` frames. Omit `refText` for x-vector-only.
 
-Reference audio is converted to mono 24 kHz on the calling thread (`AudioClip.GetData`). First clone also loads `speaker_encoder.onnx` (~48 MB). First `GenerateSpeechAsync` on a cloned voice loads the ~5.7 GB talker sessions — expect a long hitch.
+Reference audio is converted to mono 24 kHz on the calling thread (`AudioClip.GetData`). First clone loads `speaker_encoder.onnx` and `tokenizer_encoder.onnx`. First `GenerateSpeechAsync` on a cloned voice loads the talker sessions — expect a long hitch.
 
 ## What this branch does not do
 
 - Auto-download from HuggingFace
 - Windows Rust DLL
-- ICL (reference transcript + codec codes)
+- ICL (reference transcript + codec codes) — **landed**: `CreateFromReference(clip, refText)` + `tokenizer_encoder.onnx`
 - 0.6B variant
 - Packing weights into the git repo

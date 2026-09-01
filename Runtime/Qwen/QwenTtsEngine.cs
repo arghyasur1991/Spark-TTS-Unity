@@ -1,6 +1,6 @@
-// One engine for VoiceDesign style TTS and Base x-vector clone.
+// One engine for VoiceDesign style TTS and Base ICL clone.
 // Both talkers are the ElBruno graph split (LanguageModel). Clone injects
-// the speaker-encoder vector via GenerateWithSpeakerEmbedding.
+// the speaker-encoder vector plus 12 Hz ref_code + ref_text (official ICL).
 
 using System;
 using System.Collections.Generic;
@@ -35,9 +35,11 @@ namespace SparkTTS.Qwen
         private readonly LanguageModel _cloneLanguageModel;
         private readonly QwenVocoderModel _cloneVocoder;
         private readonly QwenSpeakerEncoderModel _speakerEncoder;
+        private readonly QwenTokenizerEncoderModel _tokenizerEncoder;
 
         public bool HasCustomVoice => _languageModel != null;
         public bool HasClone => _cloneLanguageModel != null;
+        public bool HasIclEncoder => _tokenizerEncoder != null;
 
         public QwenTtsEngine(ExecutionProvider executionProvider = ExecutionProvider.CPU)
         {
@@ -86,6 +88,7 @@ namespace SparkTTS.Qwen
                     _cloneEmbeddings, SparkTTSModelPaths.QwenBaseFolder, executionProvider);
                 _cloneVocoder = QwenVocoderModel.Base(executionProvider);
                 _speakerEncoder = new QwenSpeakerEncoderModel(executionProvider);
+                _tokenizerEncoder = new QwenTokenizerEncoderModel(executionProvider);
                 TTSLogger.Log(
                     $"[QwenTtsEngine] Base clone embeddings from {QwenModelPaths.BaseRoot} in {sw.ElapsedMilliseconds}ms");
             }
@@ -143,7 +146,24 @@ namespace SparkTTS.Qwen
             }
         }
 
+        public long[,,] EncodeReferenceCodes(float[] samples24k)
+        {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(QwenTtsEngine));
+            if (_tokenizerEncoder == null)
+                throw new InvalidOperationException("Base ICL tokenizer encoder is not installed.");
+
+            lock (_gate)
+            {
+                var codes = _tokenizerEncoder.Encode(samples24k);
+                TTSLogger.LogVerbose(
+                    $"[QwenTtsEngine] ICL ref_code T={codes.GetLength(1)} Q={codes.GetLength(2)}");
+                return codes;
+            }
+        }
+
         public float[] SynthesizeClone(string text, float[] speakerEmbedding, string language,
+            string refText = null, long[,,] refAudioCodes = null,
             CancellationToken cancellationToken = default)
         {
             if (_disposed)
@@ -162,11 +182,28 @@ namespace SparkTTS.Qwen
                 if (tokenIds.Length < 8)
                     throw new InvalidOperationException("Prompt tokenization produced too few tokens.");
 
-                var codes = _cloneLanguageModel.GenerateWithSpeakerEmbedding(
-                    tokenIds, speakerEmbedding, language, cancellationToken: cancellationToken);
+                long[,,] codes;
+                bool icl = !string.IsNullOrEmpty(refText) && refAudioCodes != null;
+                if (icl)
+                {
+                    var refTokenIds = _cloneTokenizer.BuildIclRefTextTokens(refText);
+                    codes = _cloneLanguageModel.GenerateWithSpeakerEmbeddingAndRefText(
+                        tokenIds, speakerEmbedding, language, refTokenIds, refAudioCodes,
+                        cancellationToken: cancellationToken);
+                    TTSLogger.Log(
+                        $"[QwenTtsEngine] Base ICL clone codes T={codes.GetLength(2)} wav pending @24k refT={refAudioCodes.GetLength(1)}");
+                }
+                else
+                {
+                    codes = _cloneLanguageModel.GenerateWithSpeakerEmbedding(
+                        tokenIds, speakerEmbedding, language, cancellationToken: cancellationToken);
+                    TTSLogger.Log(
+                        $"[QwenTtsEngine] Base x-vector clone codes T={codes.GetLength(2)} wav pending @24k");
+                }
+
                 var pcm = _cloneVocoder.Decode(codes, cancellationToken);
                 TTSLogger.Log(
-                    $"[QwenTtsEngine] Base clone codes T={codes.GetLength(2)} wav={pcm.Length} @24k");
+                    $"[QwenTtsEngine] Base clone wav={pcm.Length} @24k icl={icl}");
                 return pcm;
             }
         }
@@ -175,7 +212,7 @@ namespace SparkTTS.Qwen
             CancellationToken cancellationToken = default)
         {
             return BackgroundWork.Run(
-                () => SynthesizeClone(text, speakerEmbedding, language, cancellationToken));
+                () => SynthesizeClone(text, speakerEmbedding, language, null, null, cancellationToken));
         }
 
         /// <summary>
@@ -209,6 +246,7 @@ namespace SparkTTS.Qwen
                     _cloneLanguageModel.PreloadSessions();
                     _cloneVocoder.GetSession();
                     _speakerEncoder.GetSession();
+                    _tokenizerEncoder?.GetSession();
                 }
             });
         }
@@ -257,6 +295,7 @@ namespace SparkTTS.Qwen
             _cloneLanguageModel?.Dispose();
             _cloneVocoder?.Dispose();
             _speakerEncoder?.Dispose();
+            _tokenizerEncoder?.Dispose();
         }
 
         internal NativeEmbSlot[] DetachEmbeddings() => _embeddings?.DetachNativeSlots();
@@ -271,6 +310,8 @@ namespace SparkTTS.Qwen
                 list.Add(_cloneVocoder);
             if (_speakerEncoder != null)
                 list.Add(_speakerEncoder);
+            if (_tokenizerEncoder != null)
+                list.Add(_tokenizerEncoder);
         }
 
         internal void AdoptNativeSessions(Dictionary<string, InferenceSession> sessions)

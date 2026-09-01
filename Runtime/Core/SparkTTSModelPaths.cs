@@ -36,6 +36,7 @@ namespace SparkTTS.Core
         public const string QwenCodecEmbed = "codec_embed";
         public const string QwenCodePredictorEmbed = "code_predictor_embed";
         public const string QwenSpeakerEncoder = "speaker_encoder";
+        public const string QwenTokenizerEncoder = "tokenizer_encoder";
         public const string QwenTokenizer12HzDecode = "tokenizer12hz_decode";
     }
 } 

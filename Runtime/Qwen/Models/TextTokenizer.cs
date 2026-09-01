@@ -122,6 +122,25 @@ namespace SparkTTS.Qwen.Models
             return tokens.ToArray();
         }
 
+        /// <summary>
+        /// Official ICL <c>ref_id[:, 3:-2]</c> from
+        /// <c>&lt;|im_start|&gt;assistant\n{text}&lt;|im_end|&gt;\n</c>.
+        /// </summary>
+        public int[] BuildIclRefTextTokens(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                throw new ArgumentException("ICL reference transcript is empty.", nameof(text));
+            var wrapped = $"<|im_start|>assistant\n{text}<|im_end|>\n";
+            var ids = Encode(wrapped);
+            // generate_icl_prompt uses ref_id[:, 3:-2] (drop role prefix + im_end/newline).
+            if (ids.Length < 6)
+                throw new InvalidOperationException("ICL ref_text produced too few tokens.");
+            int inner = ids.Length - 5;
+            var sliced = new int[inner];
+            Array.Copy(ids, 3, sliced, 0, inner);
+            return sliced;
+        }
+
         public void Dispose()
         {
         }

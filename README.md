@@ -75,7 +75,7 @@ Some dependencies require additional scoped registry configuration. Add the foll
 
 - On-device text-to-speech synthesis
 - Voice styling with adjustable gender, pitch, and speed
-- Voice cloning via `CreateFromReference` when 1.7B Base ONNX is present (see QWEN3.md)
+- Voice cloning via `CreateFromReference(clip, refText)` (official ICL) when 1.7B Base ONNX is present (see QWEN3.md)
 - Optimized for runtime performance
 - Simple API for integration into games and applications
 
