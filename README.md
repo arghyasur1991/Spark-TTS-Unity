@@ -1,5 +1,12 @@
 # Spark-TTS-Unity
 
+> [!WARNING]
+> **This package is deprecated and no longer maintained.**
+>
+> Development has moved to **[Qwen3-TTS-Unity](https://github.com/arghyasur1991/Qwen3-TTS-Unity)**, a Unity package for on-device Qwen3-TTS (12 Hz) inference with VoiceDesign (describe a speaker in words) and Base ICL voice cloning (a reference recording plus its transcript), streaming synthesis, and optional int8 weights. It is the TTS backend for [LiveTalk-Unity](https://github.com/arghyasur1991/LiveTalk-Unity) from 2.0.0 onward.
+>
+> Spark-TTS-Unity stays available as-is for existing projects. It will not receive fixes or new features, and issues and pull requests are not being triaged. If you are starting something new, use Qwen3-TTS-Unity.
+
 Unity package for using Spark-TTS on-device models. This is a C# port of [https://github.com/SparkAudio/Spark-TTS](https://github.com/SparkAudio/Spark-TTS) by SparkAudio team and uses converted ONNX models instead of the PyTorch models in the original repo.
 
 ## What is Spark-TTS?
